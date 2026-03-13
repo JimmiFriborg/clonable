@@ -3,13 +3,32 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { createProjectFromIdea, updateProjectMvp } from "@/server/services/project-service";
+import {
+  createProjectFeature,
+  createProjectFromIdea,
+  createProjectPhase,
+  createProjectTask,
+  updateProjectMvp,
+  updateProjectTaskStatus,
+} from "@/server/services/project-service";
+import { priorityOrder, taskStatusOrder } from "@/server/domain/project";
 
 function parseLines(value: FormDataEntryValue | null) {
   return String(value ?? "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function revalidateProjectPaths(projectId: string) {
+  revalidatePath("/");
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/goal`);
+  revalidatePath(`/projects/${projectId}/phases`);
+  revalidatePath(`/projects/${projectId}/features`);
+  revalidatePath(`/projects/${projectId}/tasks`);
+  revalidatePath(`/projects/${projectId}/kanban`);
+  revalidatePath(`/projects/${projectId}/logs`);
 }
 
 export async function createProjectAction(formData: FormData) {
@@ -36,7 +55,84 @@ export async function updateProjectGoalAction(projectId: string, formData: FormD
     constraints: parseLines(formData.get("constraints")),
   });
 
-  revalidatePath(`/projects/${projectId}`);
-  revalidatePath(`/projects/${projectId}/goal`);
+  revalidateProjectPaths(projectId);
   redirect(`/projects/${projectId}/goal`);
+}
+
+export async function createProjectPhaseAction(
+  projectId: string,
+  returnPath: string,
+  formData: FormData,
+) {
+  await createProjectPhase(projectId, {
+    title: String(formData.get("title") ?? "").trim(),
+    goal: String(formData.get("goal") ?? "").trim(),
+  });
+
+  revalidateProjectPaths(projectId);
+  redirect(returnPath);
+}
+
+export async function createProjectFeatureAction(
+  projectId: string,
+  returnPath: string,
+  formData: FormData,
+) {
+  const priority = String(formData.get("priority") ?? "P1").trim();
+
+  await createProjectFeature(projectId, {
+    phaseId: String(formData.get("phaseId") ?? "").trim(),
+    title: String(formData.get("title") ?? "").trim(),
+    summary: String(formData.get("summary") ?? "").trim(),
+    priority: priorityOrder.includes(priority as (typeof priorityOrder)[number])
+      ? (priority as (typeof priorityOrder)[number])
+      : "P1",
+  });
+
+  revalidateProjectPaths(projectId);
+  redirect(returnPath);
+}
+
+export async function createProjectTaskAction(
+  projectId: string,
+  returnPath: string,
+  formData: FormData,
+) {
+  const priority = String(formData.get("priority") ?? "P1").trim();
+  const dependencies = formData
+    .getAll("dependencies")
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+
+  await createProjectTask(projectId, {
+    featureId: String(formData.get("featureId") ?? "").trim(),
+    title: String(formData.get("title") ?? "").trim(),
+    description: String(formData.get("description") ?? "").trim(),
+    priority: priorityOrder.includes(priority as (typeof priorityOrder)[number])
+      ? (priority as (typeof priorityOrder)[number])
+      : "P1",
+    acceptanceCriteria: parseLines(formData.get("acceptanceCriteria")),
+    dependencies,
+  });
+
+  revalidateProjectPaths(projectId);
+  redirect(returnPath);
+}
+
+export async function updateTaskStatusAction(
+  projectId: string,
+  taskId: string,
+  returnPath: string,
+  formData: FormData,
+) {
+  const status = String(formData.get("status") ?? "Planned").trim();
+
+  await updateProjectTaskStatus(projectId, taskId, {
+    status: taskStatusOrder.includes(status as (typeof taskStatusOrder)[number])
+      ? (status as (typeof taskStatusOrder)[number])
+      : "Planned",
+  });
+
+  revalidateProjectPaths(projectId);
+  redirect(returnPath);
 }

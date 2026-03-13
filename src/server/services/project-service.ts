@@ -1,10 +1,14 @@
 import { sqliteProjectRepository } from "@/server/infrastructure/repositories/sqlite-project-repository";
 import type { ProjectRepository } from "@/server/domain/project-repository";
 import type {
+  FeatureCreateInput,
   PlannerDraft,
+  PhaseCreateInput,
   ProjectIntakeInput,
   ProjectMvpUpdateInput,
   ProjectRecord,
+  TaskCreateInput,
+  TaskStatusUpdateInput,
 } from "@/server/domain/project";
 import { generatePlannerDraft } from "@/server/services/planner-service";
 
@@ -109,6 +113,83 @@ export async function updateProjectMvp(projectId: string, input: ProjectMvpUpdat
       type: "task",
       summary: "MVP draft updated",
       reason: "The project goal and MVP boundary were edited manually.",
+    });
+  }
+
+  return project;
+}
+
+export async function createProjectPhase(projectId: string, input: PhaseCreateInput) {
+  const project = await sqliteProjectRepository.createPhase(projectId, input);
+
+  if (project) {
+    await sqliteProjectRepository.recordEvent({
+      projectId,
+      type: "task",
+      summary: "Phase added",
+      reason: `The planning structure gained a new phase: ${input.title}.`,
+    });
+  }
+
+  return project;
+}
+
+export async function createProjectFeature(projectId: string, input: FeatureCreateInput) {
+  const project = await sqliteProjectRepository.createFeature(projectId, input);
+
+  if (project) {
+    await sqliteProjectRepository.recordEvent({
+      projectId,
+      type: "task",
+      summary: "Feature added",
+      reason: `A manual planning edit added the feature ${input.title}.`,
+      payload: {
+        phaseId: input.phaseId,
+        priority: input.priority,
+      },
+    });
+  }
+
+  return project;
+}
+
+export async function createProjectTask(projectId: string, input: TaskCreateInput) {
+  const project = await sqliteProjectRepository.createTask(projectId, input);
+
+  if (project) {
+    await sqliteProjectRepository.recordEvent({
+      projectId,
+      type: "task",
+      summary: "Task added",
+      reason: `A new task was added manually: ${input.title}.`,
+      payload: {
+        featureId: input.featureId,
+        priority: input.priority,
+        dependencies: input.dependencies,
+      },
+    });
+  }
+
+  return project;
+}
+
+export async function updateProjectTaskStatus(
+  projectId: string,
+  taskId: string,
+  input: TaskStatusUpdateInput,
+) {
+  const project = await sqliteProjectRepository.updateTaskStatus(projectId, taskId, input);
+
+  if (project) {
+    await sqliteProjectRepository.recordEvent({
+      projectId,
+      type: "task",
+      summary: "Task status updated",
+      reason: `Task ${taskId} moved to ${input.status}.`,
+      payload: {
+        taskId,
+        status: input.status,
+      },
     });
   }
 

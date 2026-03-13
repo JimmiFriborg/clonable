@@ -9,7 +9,9 @@ import type {
   AgentRecord,
   EventInput,
   EventRecord,
+  FeatureCreateInput,
   PlannerDraft,
+  PhaseCreateInput,
   PreviewRecord,
   PreviewLogRecord,
   ProjectDashboardModel,
@@ -17,7 +19,9 @@ import type {
   ProjectMvpUpdateInput,
   ProjectRecord,
   ProjectStatus,
+  TaskCreateInput,
   TaskHistoryRecord,
+  TaskStatusUpdateInput,
   WorkspaceFileRecord,
   WorkspaceRecord,
 } from "@/server/domain/project";
@@ -188,6 +192,128 @@ function createTaskHistory(summary: string, reason: string): TaskHistoryRecord[]
       reason,
     },
   ];
+}
+
+function createTaskHistoryEntry(summary: string, reason: string): TaskHistoryRecord {
+  return {
+    at: nowIso(),
+    summary,
+    reason,
+  };
+}
+
+function hasStartedTask(project: ProjectRecord, scopeId: string, key: "phaseId" | "featureId") {
+  return project.tasks.some(
+    (task) =>
+      task[key] === scopeId &&
+      ["In Progress", "Review", "Blocked", "Done"].includes(task.status),
+  );
+}
+
+function syncProjectState(project: ProjectRecord): ProjectRecord {
+  const features = project.features.map((feature) => {
+    const tasks = project.tasks.filter((task) => task.featureId === feature.id);
+
+    if (tasks.length === 0) {
+      return feature;
+    }
+
+    if (tasks.every((task) => task.status === "Done")) {
+      return {
+        ...feature,
+        status: "Done" as const,
+      };
+    }
+
+    if (hasStartedTask(project, feature.id, "featureId")) {
+      return {
+        ...feature,
+        status: "In Progress" as const,
+      };
+    }
+
+    return {
+      ...feature,
+      status: feature.status === "Done" ? "Planned" : feature.status,
+    };
+  });
+
+  const featuresById = new Map(features.map((feature) => [feature.id, feature]));
+  const phases = project.phases.map((phase) => {
+    const tasks = project.tasks.filter((task) => task.phaseId === phase.id);
+
+    if (tasks.length === 0) {
+      return phase;
+    }
+
+    if (tasks.every((task) => task.status === "Done")) {
+      return {
+        ...phase,
+        status: "Done" as const,
+      };
+    }
+
+    const phaseFeatures = features.filter((feature) => feature.phaseId === phase.id);
+    const hasStartedFeature = phaseFeatures.some(
+      (feature) => featuresById.get(feature.id)?.status === "In Progress",
+    );
+
+    if (hasStartedFeature || hasStartedTask(project, phase.id, "phaseId")) {
+      return {
+        ...phase,
+        status: "In Progress" as const,
+      };
+    }
+
+    return {
+      ...phase,
+      status: phase.status === "Done" ? "Planned" : phase.status,
+    };
+  });
+
+  const syncedProject = {
+    ...project,
+    features,
+    phases,
+  };
+  const dashboard = buildProjectDashboardModel(syncedProject);
+
+  let currentFocus = project.currentFocus;
+  if (project.phases.length === 0) {
+    currentFocus = "Define the first phase for the MVP.";
+  } else if (project.features.length === 0) {
+    currentFocus = `Break ${project.phases[0]?.title ?? "the MVP"} into features.`;
+  } else if (project.tasks.length === 0) {
+    currentFocus = `Create the first actionable task for ${project.features[0]?.title ?? "the MVP"}.`;
+  } else if (dashboard.blockers[0]) {
+    currentFocus = `Resolve blockers on ${dashboard.blockers[0].title}.`;
+  } else if (dashboard.nextTasks[0]) {
+    currentFocus = `Focus on ${dashboard.nextTasks[0].title}.`;
+  } else if (
+    dashboard.counts.totalTasks > 0 &&
+    dashboard.counts.doneTasks === dashboard.counts.totalTasks
+  ) {
+    currentFocus = "Review completed MVP work and choose the next slice.";
+  }
+
+  let status: ProjectStatus = "Planning";
+  if (project.tasks.length === 0) {
+    status = "Planning";
+  } else if (dashboard.counts.doneTasks === dashboard.counts.totalTasks) {
+    status = "Review";
+  } else if (
+    project.tasks.some((task) =>
+      ["In Progress", "Review", "Blocked", "Done"].includes(task.status),
+    )
+  ) {
+    status = "Building";
+  }
+
+  return {
+    ...syncedProject,
+    status,
+    currentFocus,
+  };
 }
 
 function mapProjectRowsToRecord(
@@ -747,6 +873,143 @@ export class SQLiteProjectRepository implements ProjectRepository {
         constraints: input.constraints,
       },
     };
+
+    this.persistProjectGraph(updatedProject);
+    return updatedProject;
+  }
+
+  async createPhase(projectId: string, input: PhaseCreateInput) {
+    const project = await this.getProject(projectId);
+
+    if (!project) {
+      return undefined;
+    }
+
+    const updatedProject = syncProjectState({
+      ...project,
+      phases: [
+        ...project.phases,
+        {
+          id: `${project.id}-phase-${slugify(input.title) || project.phases.length + 1}-${crypto.randomUUID().slice(0, 8)}`,
+          title: input.title,
+          goal: input.goal,
+          status: project.phases.length === 0 ? "In Progress" : "Planned",
+          sortOrder: project.phases.length + 1,
+        },
+      ],
+    });
+
+    this.persistProjectGraph(updatedProject);
+    return updatedProject;
+  }
+
+  async createFeature(projectId: string, input: FeatureCreateInput) {
+    const project = await this.getProject(projectId);
+
+    if (!project || !project.phases.some((phase) => phase.id === input.phaseId)) {
+      return undefined;
+    }
+
+    const updatedProject = syncProjectState({
+      ...project,
+      features: [
+        ...project.features,
+        {
+          id: `${project.id}-feature-${slugify(input.title) || project.features.length + 1}-${crypto.randomUUID().slice(0, 8)}`,
+          phaseId: input.phaseId,
+          title: input.title,
+          summary: input.summary,
+          status: "Planned",
+          priority: input.priority,
+          sortOrder: project.features.length + 1,
+        },
+      ],
+    });
+
+    this.persistProjectGraph(updatedProject);
+    return updatedProject;
+  }
+
+  async createTask(projectId: string, input: TaskCreateInput) {
+    const project = await this.getProject(projectId);
+
+    if (!project) {
+      return undefined;
+    }
+
+    const feature = project.features.find((candidate) => candidate.id === input.featureId);
+
+    if (!feature) {
+      return undefined;
+    }
+
+    const dependencies = input.dependencies.filter((dependencyId) =>
+      project.tasks.some((task) => task.id === dependencyId),
+    );
+
+    const updatedProject = syncProjectState({
+      ...project,
+      tasks: [
+        ...project.tasks,
+        {
+          id: `${project.id}-task-${slugify(input.title) || project.tasks.length + 1}-${crypto.randomUUID().slice(0, 8)}`,
+          phaseId: feature.phaseId,
+          featureId: feature.id,
+          title: input.title,
+          description: input.description,
+          status: dependencies.length === 0 ? "Ready" : "Planned",
+          priority: input.priority,
+          dependencies,
+          blockers: [],
+          acceptanceCriteria: input.acceptanceCriteria,
+          relatedFiles: [],
+          artifacts: [],
+          history: createTaskHistory(
+            "Task created",
+            "Added manually from the planning interface.",
+          ),
+        },
+      ],
+    });
+
+    this.persistProjectGraph(updatedProject);
+    return updatedProject;
+  }
+
+  async updateTaskStatus(projectId: string, taskId: string, input: TaskStatusUpdateInput) {
+    const project = await this.getProject(projectId);
+
+    if (!project) {
+      return undefined;
+    }
+
+    const existingTask = project.tasks.find((task) => task.id === taskId);
+
+    if (!existingTask) {
+      return undefined;
+    }
+
+    const updatedProject = syncProjectState({
+      ...project,
+      tasks: project.tasks.map((task) => {
+        if (task.id !== taskId) {
+          return task;
+        }
+
+        return {
+          ...task,
+          status: input.status,
+          completedAt: input.status === "Done" ? nowIso() : undefined,
+          history: [
+            ...task.history,
+            createTaskHistoryEntry(
+              `Status set to ${input.status}`,
+              `Updated manually from ${task.status} to ${input.status}.`,
+            ),
+          ],
+        };
+      }),
+    });
 
     this.persistProjectGraph(updatedProject);
     return updatedProject;

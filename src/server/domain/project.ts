@@ -259,6 +259,31 @@ export interface ProjectMvpUpdateInput {
   constraints: string[];
 }
 
+export interface PhaseCreateInput {
+  title: string;
+  goal: string;
+}
+
+export interface FeatureCreateInput {
+  phaseId: string;
+  title: string;
+  summary: string;
+  priority: Priority;
+}
+
+export interface TaskCreateInput {
+  featureId: string;
+  title: string;
+  description: string;
+  priority: Priority;
+  acceptanceCriteria: string[];
+  dependencies: string[];
+}
+
+export interface TaskStatusUpdateInput {
+  status: TaskStatus;
+}
+
 export interface EventInput {
   projectId: string;
   type: EventType;

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { ProgressBar } from "@/components/ui/progress-bar";
+import { createProjectPhaseAction } from "@/features/projects/actions";
 import { PageIntro } from "@/features/projects/components/page-intro";
 import { getProjectDashboard } from "@/server/services/project-service";
 
@@ -23,6 +24,11 @@ export default async function PhasesPage({
       dashboard.project.features.filter((feature) => feature.phaseId === phase.id).length,
     ]),
   );
+  const createPhaseFormAction = createProjectPhaseAction.bind(
+    null,
+    projectId,
+    `/projects/${projectId}/phases`,
+  );
 
   return (
     <div className="space-y-6">
@@ -31,6 +37,59 @@ export default async function PhasesPage({
         title="Execution stays legible when phases are explicit"
         description="Phases create a visible sequence from product contract to planning, execution, and local runtime integration."
       />
+
+      <Card>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-2xl space-y-2">
+            <CardTitle>Add a phase</CardTitle>
+            <CardDescription>
+              Phases keep the MVP finishable. Start with a small sequence and expand only
+              when the current phase is genuinely clear.
+            </CardDescription>
+          </div>
+        </div>
+
+        <form action={createPhaseFormAction} className="mt-6 grid gap-5 lg:grid-cols-[1fr_1.2fr_auto]">
+          <label className="grid gap-2">
+            <span className="text-sm font-semibold text-slate-900">Phase title</span>
+            <input
+              name="title"
+              required
+              placeholder="Phase 2: Workspace execution"
+              className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600"
+            />
+          </label>
+
+          <label className="grid gap-2">
+            <span className="text-sm font-semibold text-slate-900">Phase goal</span>
+            <input
+              name="goal"
+              required
+              placeholder="Turn the approved MVP plan into branch-safe implementation work."
+              className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600"
+            />
+          </label>
+
+          <div className="flex items-end">
+            <button
+              type="submit"
+              className="inline-flex w-full justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              Add phase
+            </button>
+          </div>
+        </form>
+      </Card>
+
+      {dashboard.phaseProgress.length === 0 ? (
+        <Card>
+          <CardTitle>No phases yet</CardTitle>
+          <CardDescription className="mt-3">
+            The project is ready for the first explicit phase. Once phases exist, Clonable
+            can keep progress and next steps much clearer.
+          </CardDescription>
+        </Card>
+      ) : null}
 
       <div className="grid gap-5">
         {dashboard.phaseProgress.map((phase) => (
