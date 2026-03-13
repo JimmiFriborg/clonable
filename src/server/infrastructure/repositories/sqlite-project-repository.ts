@@ -109,8 +109,10 @@ function getDefaultAgentStatus(name: string): AgentRecord["status"] {
 }
 
 function buildWorkspaceState(slug: string): WorkspaceRecord {
+  const projectsRoot = process.env.CLONABLE_PROJECTS_ROOT ?? "./projects";
+
   return {
-    rootPath: path.resolve(process.cwd(), "projects", slug),
+    rootPath: path.resolve(process.cwd(), projectsRoot, slug),
     repoProvider: "Local Git",
     branch: "main",
     lastCommit: "No commits yet",
@@ -496,6 +498,9 @@ function mapProjectRowsToRecord(
           command: previewRow.command,
           port: previewRow.port,
           url: previewRow.url,
+          pid: previewRow.pid ?? undefined,
+          logPath: previewRow.logPath ?? undefined,
+          lastExitCode: previewRow.lastExitCode ?? undefined,
           lastRestartedAt: previewRow.lastRestartedAt ?? undefined,
           recentLogs: parseJson(previewRow.recentLogs, [] as PreviewLogRecord[]),
         }
@@ -642,6 +647,9 @@ function insertProjectGraph(db: AppDatabase, project: ProjectRecord) {
       command: project.preview.command,
       port: project.preview.port,
       url: project.preview.url,
+      pid: project.preview.pid ?? null,
+      logPath: project.preview.logPath ?? null,
+      lastExitCode: project.preview.lastExitCode ?? null,
       lastRestartedAt: project.preview.lastRestartedAt ?? null,
       recentLogs: serializeJson(project.preview.recentLogs),
     })
@@ -1015,6 +1023,38 @@ export class SQLiteProjectRepository implements ProjectRepository {
     return updatedProject;
   }
 
+  async updateWorkspaceState(projectId: string, workspace: WorkspaceRecord) {
+    const project = await this.getProject(projectId);
+
+    if (!project) {
+      return undefined;
+    }
+
+    const updatedProject = {
+      ...project,
+      workspace,
+    };
+
+    this.persistProjectGraph(updatedProject);
+    return updatedProject;
+  }
+
+  async updatePreviewState(projectId: string, preview: PreviewRecord) {
+    const project = await this.getProject(projectId);
+
+    if (!project) {
+      return undefined;
+    }
+
+    const updatedProject = {
+      ...project,
+      preview,
+    };
+
+    this.persistProjectGraph(updatedProject);
+    return updatedProject;
+  }
+
   async recordEvent(input: EventInput) {
     this.database.db
       .insert(eventsTable)
@@ -1172,6 +1212,9 @@ export class SQLiteProjectRepository implements ProjectRepository {
           command: project.preview.command,
           port: project.preview.port,
           url: project.preview.url,
+          pid: project.preview.pid ?? null,
+          logPath: project.preview.logPath ?? null,
+          lastExitCode: project.preview.lastExitCode ?? null,
           lastRestartedAt: project.preview.lastRestartedAt ?? null,
           recentLogs: serializeJson(project.preview.recentLogs),
         })

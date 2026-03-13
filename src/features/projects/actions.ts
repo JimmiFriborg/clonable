@@ -11,6 +11,17 @@ import {
   updateProjectMvp,
   updateProjectTaskStatus,
 } from "@/server/services/project-service";
+import {
+  refreshProjectPreview,
+  restartProjectPreview,
+  startProjectPreview,
+  stopProjectPreview,
+  updateProjectPreviewSettings,
+} from "@/server/services/preview-service";
+import {
+  commitProjectWorkspace,
+  syncProjectWorkspace,
+} from "@/server/services/workspace-service";
 import { priorityOrder, taskStatusOrder } from "@/server/domain/project";
 
 function parseLines(value: FormDataEntryValue | null) {
@@ -28,7 +39,10 @@ function revalidateProjectPaths(projectId: string) {
   revalidatePath(`/projects/${projectId}/features`);
   revalidatePath(`/projects/${projectId}/tasks`);
   revalidatePath(`/projects/${projectId}/kanban`);
+  revalidatePath(`/projects/${projectId}/workspace`);
+  revalidatePath(`/projects/${projectId}/preview`);
   revalidatePath(`/projects/${projectId}/logs`);
+  revalidatePath(`/projects/${projectId}/settings`);
 }
 
 export async function createProjectAction(formData: FormData) {
@@ -132,6 +146,69 @@ export async function updateTaskStatusAction(
       ? (status as (typeof taskStatusOrder)[number])
       : "Planned",
   });
+
+  revalidateProjectPaths(projectId);
+  redirect(returnPath);
+}
+
+export async function syncWorkspaceAction(projectId: string, returnPath: string) {
+  await syncProjectWorkspace(projectId);
+
+  revalidateProjectPaths(projectId);
+  redirect(returnPath);
+}
+
+export async function commitWorkspaceAction(
+  projectId: string,
+  returnPath: string,
+  formData: FormData,
+) {
+  await commitProjectWorkspace(
+    projectId,
+    String(formData.get("message") ?? "").trim(),
+  );
+
+  revalidateProjectPaths(projectId);
+  redirect(returnPath);
+}
+
+export async function updatePreviewSettingsAction(
+  projectId: string,
+  returnPath: string,
+  formData: FormData,
+) {
+  await updateProjectPreviewSettings(projectId, {
+    command: String(formData.get("command") ?? "").trim(),
+    port: Number(String(formData.get("port") ?? "3000").trim()),
+  });
+
+  revalidateProjectPaths(projectId);
+  redirect(returnPath);
+}
+
+export async function startPreviewAction(projectId: string, returnPath: string) {
+  await startProjectPreview(projectId);
+
+  revalidateProjectPaths(projectId);
+  redirect(returnPath);
+}
+
+export async function restartPreviewAction(projectId: string, returnPath: string) {
+  await restartProjectPreview(projectId);
+
+  revalidateProjectPaths(projectId);
+  redirect(returnPath);
+}
+
+export async function stopPreviewAction(projectId: string, returnPath: string) {
+  await stopProjectPreview(projectId);
+
+  revalidateProjectPaths(projectId);
+  redirect(returnPath);
+}
+
+export async function refreshPreviewAction(projectId: string, returnPath: string) {
+  await refreshProjectPreview(projectId);
 
   revalidateProjectPaths(projectId);
   redirect(returnPath);

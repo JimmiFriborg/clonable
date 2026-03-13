@@ -120,6 +120,9 @@ export interface PreviewRecord {
   command: string;
   port: number;
   url: string;
+  pid?: number;
+  logPath?: string;
+  lastExitCode?: number;
   lastRestartedAt?: string;
   recentLogs: PreviewLogRecord[];
 }
@@ -282,6 +285,11 @@ export interface TaskCreateInput {
 
 export interface TaskStatusUpdateInput {
   status: TaskStatus;
+}
+
+export interface PreviewSettingsInput {
+  command: string;
+  port: number;
 }
 
 export interface EventInput {

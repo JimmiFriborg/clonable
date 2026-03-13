@@ -19,6 +19,7 @@ export function createRepositoryForPath(databasePath: string, tempDirectory: str
   return {
     repository: new SQLiteProjectRepository(database),
     database,
+    tempDirectory,
     cleanup() {
       database.sqlite.close();
       fs.rmSync(tempDirectory, { force: true, recursive: true });

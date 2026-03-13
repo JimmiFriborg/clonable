@@ -1,6 +1,13 @@
 import { notFound } from "next/navigation";
 
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import {
+  refreshPreviewAction,
+  restartPreviewAction,
+  startPreviewAction,
+  stopPreviewAction,
+  updatePreviewSettingsAction,
+} from "@/features/projects/actions";
 import { PageIntro } from "@/features/projects/components/page-intro";
 import { getProjectDashboard } from "@/server/services/project-service";
 
@@ -17,13 +24,14 @@ export default async function PreviewPage({
   }
 
   const { preview } = dashboard.project;
+  const returnPath = `/projects/${projectId}/preview`;
 
   return (
     <div className="space-y-6">
       <PageIntro
         eyebrow="Preview"
         title="Runtime controls stay understandable"
-        description="Preview management is a V1 requirement, but it should arrive on top of real workspace ownership and observable process metadata."
+        description="Preview management now runs against a persisted local process record so start, restart, stop, and logs stay attached to the project."
       />
 
       <section className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
@@ -35,29 +43,88 @@ export default async function PreviewPage({
           <CardDescription className="mt-3 text-white/75">
             Command: {preview.command} on port {preview.port}
           </CardDescription>
-          <div className="mt-6 rounded-[24px] bg-white/8 p-4">
-            <p className="text-sm text-white/78">
-              Runtime controls are intentionally held behind the workspace bridge so process state
-              remains tied to a project and not a loose terminal session.
-            </p>
+          <div className="mt-6 space-y-3 rounded-[24px] bg-white/8 p-4 text-sm text-white/78">
+            <p>URL: {preview.url}</p>
+            <p>PID: {preview.pid ?? "Not running"}</p>
+            <p>Log path: {preview.logPath ?? "Will be created on first start"}</p>
           </div>
         </Card>
 
         <Card>
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-700">
-            Planned controls
-          </p>
-          <div className="mt-4 grid gap-4 sm:grid-cols-3">
-            {["Start", "Restart", "Stop"].map((label) => (
-              <div
-                key={label}
-                className="rounded-[24px] border border-slate-200 bg-slate-950/[0.03] px-4 py-8 text-center text-sm font-semibold text-slate-700"
+          <CardTitle>Preview controls</CardTitle>
+          <CardDescription className="mt-3">
+            Configure the command once, then control the local preview without leaving the
+            project view.
+          </CardDescription>
+
+          <form
+            action={updatePreviewSettingsAction.bind(null, projectId, returnPath)}
+            className="mt-6 grid gap-4"
+          >
+            <label className="grid gap-2">
+              <span className="text-sm font-semibold text-slate-900">Command</span>
+              <input
+                name="command"
+                defaultValue={preview.command}
+                className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600"
+              />
+            </label>
+
+            <label className="grid gap-2">
+              <span className="text-sm font-semibold text-slate-900">Port</span>
+              <input
+                name="port"
+                type="number"
+                min={1}
+                defaultValue={preview.port}
+                className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600"
+              />
+            </label>
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                className="inline-flex rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
               >
-                {label}
-              </div>
-            ))}
+                Save preview settings
+              </button>
+            </div>
+          </form>
+
+          <div className="mt-6 grid gap-4 sm:grid-cols-4">
+            <form action={startPreviewAction.bind(null, projectId, returnPath)}>
+              <button
+                type="submit"
+                className="inline-flex w-full justify-center rounded-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+              >
+                Start
+              </button>
+            </form>
+            <form action={restartPreviewAction.bind(null, projectId, returnPath)}>
+              <button
+                type="submit"
+                className="inline-flex w-full justify-center rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
+              >
+                Restart
+              </button>
+            </form>
+            <form action={stopPreviewAction.bind(null, projectId, returnPath)}>
+              <button
+                type="submit"
+                className="inline-flex w-full justify-center rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
+              >
+                Stop
+              </button>
+            </form>
+            <form action={refreshPreviewAction.bind(null, projectId, returnPath)}>
+              <button
+                type="submit"
+                className="inline-flex w-full justify-center rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
+              >
+                Refresh
+              </button>
+            </form>
           </div>
-          <p className="mt-4 text-sm leading-6 text-slate-600">URL: {preview.url}</p>
         </Card>
       </section>
 

@@ -154,6 +154,9 @@ export const previewStateTable = sqliteTable("preview_state", {
   command: text("command").notNull(),
   port: integer("port").notNull(),
   url: text("url").notNull(),
+  pid: integer("pid"),
+  logPath: text("log_path"),
+  lastExitCode: integer("last_exit_code"),
   lastRestartedAt: text("last_restarted_at"),
   recentLogs: text("recent_logs").notNull(),
 });

@@ -3,6 +3,7 @@ import type {
   FeatureCreateInput,
   PhaseCreateInput,
   PlannerDraft,
+  PreviewRecord,
   ProjectDashboardModel,
   ProjectIntakeInput,
   ProjectListItem,
@@ -10,6 +11,7 @@ import type {
   ProjectRecord,
   TaskCreateInput,
   TaskStatusUpdateInput,
+  WorkspaceRecord,
 } from "@/server/domain/project";
 
 export interface ProjectRepository {
@@ -43,6 +45,14 @@ export interface ProjectRepository {
     projectId: string,
     taskId: string,
     input: TaskStatusUpdateInput,
+  ): Promise<ProjectRecord | undefined>;
+  updateWorkspaceState(
+    projectId: string,
+    workspace: WorkspaceRecord,
+  ): Promise<ProjectRecord | undefined>;
+  updatePreviewState(
+    projectId: string,
+    preview: PreviewRecord,
   ): Promise<ProjectRecord | undefined>;
   recordEvent(input: EventInput): Promise<void>;
   seedDemoProject(project: ProjectRecord): Promise<void>;
