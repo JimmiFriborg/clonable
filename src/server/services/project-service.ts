@@ -1,150 +1,120 @@
-import {
-  priorityOrder,
-  taskStatusOrder,
-  type ProgressSlice,
-  type ProjectDashboardModel,
-  type ProjectRecord,
-  type TaskRecord,
+import { sqliteProjectRepository } from "@/server/infrastructure/repositories/sqlite-project-repository";
+import type { ProjectRepository } from "@/server/domain/project-repository";
+import type {
+  PlannerDraft,
+  ProjectIntakeInput,
+  ProjectMvpUpdateInput,
+  ProjectRecord,
 } from "@/server/domain/project";
-import { demoProjects, findDemoProject } from "@/server/infrastructure/demo-project-repository";
+import { generatePlannerDraft } from "@/server/services/planner-service";
 
-function isDone(task: TaskRecord) {
-  return task.status === "Done";
+function buildFallbackMvp(input: ProjectIntakeInput): ProjectMvpUpdateInput {
+  return {
+    vision: input.ideaPrompt,
+    goalStatement: input.ideaPrompt,
+    summary: `Define the smallest credible MVP for ${input.name}.`,
+    successDefinition: "Confirm the MVP boundary and establish the first execution phase.",
+    boundaryReasoning:
+      "Planner output was unavailable, so this project starts with a manual draft based on the original idea prompt.",
+    laterScope: [],
+    constraints: input.constraints,
+  };
 }
 
-function buildProgressSlices(
-  project: ProjectRecord,
-  groupBy: "phaseId" | "featureId",
-): ProgressSlice[] {
-  const groups =
-    groupBy === "phaseId"
-      ? project.phases.map((phase) => ({
-          id: phase.id,
-          title: phase.title,
-          status: phase.status,
-        }))
-      : project.features.map((feature) => ({
-          id: feature.id,
-          title: feature.title,
-          status: feature.status,
-        }));
+export async function listProjects() {
+  return sqliteProjectRepository.listProjects();
+}
 
-  return groups.map((group) => {
-    const tasks = project.tasks.filter((task) => task[groupBy] === group.id);
-    const completedTasks = tasks.filter(isDone).length;
-    const totalTasks = tasks.length;
-    const progressPercent =
-      totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
+export async function getProject(projectId: string) {
+  return sqliteProjectRepository.getProject(projectId);
+}
 
-    return {
-      id: group.id,
-      title: group.title,
-      status: group.status,
-      completedTasks,
-      totalTasks,
-      progressPercent,
-    };
+export async function getProjectDashboard(projectId: string) {
+  return sqliteProjectRepository.getProjectDashboard(projectId);
+}
+
+interface CreateProjectDependencies {
+  repository?: ProjectRepository;
+  planner?: (input: ProjectIntakeInput) => Promise<PlannerDraft>;
+}
+
+export async function createProjectFromIdea(
+  input: ProjectIntakeInput,
+  dependencies: CreateProjectDependencies = {},
+) {
+  const repository = dependencies.repository ?? sqliteProjectRepository;
+  const planner = dependencies.planner ?? generatePlannerDraft;
+  const project = await repository.createProject(input);
+
+  await repository.recordEvent({
+    projectId: project.id,
+    type: "system",
+    summary: "Project intake captured",
+    reason: "The project was created from the intake form and queued for planning.",
+    payload: {
+      targetUser: input.targetUser,
+      constraints: input.constraints,
+      stackPreferences: input.stackPreferences,
+    },
   });
-}
 
-function dependenciesSatisfied(task: TaskRecord, project: ProjectRecord) {
-  const byId = new Map(project.tasks.map((candidate) => [candidate.id, candidate]));
-  return task.dependencies.every((dependencyId) => byId.get(dependencyId)?.status === "Done");
-}
+  let draft: PlannerDraft;
 
-function sortTasksForRecommendation(project: ProjectRecord, left: TaskRecord, right: TaskRecord) {
-  const statusRank = (status: TaskRecord["status"]) =>
-    ["Ready", "In Progress", "Planned", "Inbox", "Review", "Blocked", "Done"].indexOf(status);
+  try {
+    draft = await planner(input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown planner failure.";
+    const updatedProject = await repository.savePlannerFailure(
+      project.id,
+      message,
+      buildFallbackMvp(input),
+    );
 
-  const dependencyUnlockCount = (task: TaskRecord) =>
-    project.tasks.filter((candidate) => candidate.dependencies.includes(task.id)).length;
+    await repository.recordEvent({
+      projectId: project.id,
+      type: "system",
+      summary: "Planner failed",
+      reason: message,
+      payload: {
+        fallback: true,
+      },
+    });
 
-  const priorityRank = (priority: TaskRecord["priority"]) => priorityOrder.indexOf(priority);
-
-  return (
-    statusRank(left.status) - statusRank(right.status) ||
-    priorityRank(left.priority) - priorityRank(right.priority) ||
-    dependencyUnlockCount(right) - dependencyUnlockCount(left) ||
-    left.title.localeCompare(right.title)
-  );
-}
-
-function buildTaskColumns(project: ProjectRecord) {
-  return taskStatusOrder.map((status) => ({
-    status,
-    tasks: project.tasks
-      .filter((task) => task.status === status)
-      .sort((left, right) => sortTasksForRecommendation(project, left, right)),
-  }));
-}
-
-export function listProjects() {
-  return demoProjects.map((project) => {
-    const doneTasks = project.tasks.filter(isDone).length;
-    const totalTasks = project.tasks.length;
-    const progressPercent = Math.round((doneTasks / totalTasks) * 100);
-    const blockedTasks = project.tasks.filter((task) => task.status === "Blocked").length;
-
-    return {
-      id: project.id,
-      name: project.name,
-      summary: project.summary,
-      status: project.status,
-      progressPercent,
-      blockedTasks,
-      currentFocus: project.currentFocus,
-    };
-  });
-}
-
-export function getProjectDashboard(projectId: string): ProjectDashboardModel | undefined {
-  const project = findDemoProject(projectId);
-
-  if (!project) {
-    return undefined;
+    return updatedProject;
   }
 
-  const phaseProgress = buildProgressSlices(project, "phaseId");
-  const featureProgress = buildProgressSlices(project, "featureId");
-  const currentPhase =
-    project.phases.find((phase) => phase.status === "In Progress") ??
-    project.phases.find((phase) => phase.status === "Planned");
+  const updatedProject = await repository.savePlannerDraft(project.id, draft);
 
-  const nextTasks = project.tasks
-    .filter(
-      (task) =>
-        ["Ready", "In Progress", "Planned"].includes(task.status) &&
-        task.blockers.length === 0 &&
-        dependenciesSatisfied(task, project),
-    )
-    .sort((left, right) => sortTasksForRecommendation(project, left, right))
-    .slice(0, 3);
-
-  const blockers = project.tasks.filter((task) => task.status === "Blocked");
-  const recentCompletedTasks = [...project.tasks]
-    .filter((task) => task.completedAt)
-    .sort((left, right) => (right.completedAt ?? "").localeCompare(left.completedAt ?? ""))
-    .slice(0, 4);
-
-  const activeAgents = project.agents.filter(
-    (agent) => agent.status === "active" || agent.status === "ready",
-  );
-
-  return {
-    project,
-    currentPhase,
-    nextTasks,
-    blockers,
-    recentCompletedTasks,
-    activeAgents,
-    phaseProgress,
-    featureProgress,
-    taskColumns: buildTaskColumns(project),
-    counts: {
-      totalTasks: project.tasks.length,
-      doneTasks: project.tasks.filter(isDone).length,
-      blockedTasks: blockers.length,
-      activeAgents: activeAgents.length,
+  await repository.recordEvent({
+    projectId: project.id,
+    type: "task",
+    summary: "Planner draft generated",
+    reason: "The AI planner generated the first MVP and execution structure.",
+    payload: {
+      phases: updatedProject.phases.length,
+      features: updatedProject.features.length,
+      tasks: updatedProject.tasks.length,
     },
-  };
+  });
+
+  return updatedProject;
+}
+
+export async function updateProjectMvp(projectId: string, input: ProjectMvpUpdateInput) {
+  const project = await sqliteProjectRepository.updateMvpDefinition(projectId, input);
+
+  if (project) {
+    await sqliteProjectRepository.recordEvent({
+      projectId,
+      type: "task",
+      summary: "MVP draft updated",
+      reason: "The project goal and MVP boundary were edited manually.",
+    });
+  }
+
+  return project;
+}
+
+export async function seedProject(project: ProjectRecord) {
+  return sqliteProjectRepository.seedDemoProject(project);
 }

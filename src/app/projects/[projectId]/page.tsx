@@ -17,7 +17,7 @@ export default async function ProjectDashboardPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const dashboard = getProjectDashboard(projectId);
+  const dashboard = await getProjectDashboard(projectId);
 
   if (!dashboard) {
     notFound();

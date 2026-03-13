@@ -18,17 +18,23 @@ export const projectStatusOrder = [
 
 export const priorityOrder = ["P0", "P1", "P2", "P3"] as const;
 export const agentStatusOrder = ["active", "ready", "paused"] as const;
+export const plannerStateOrder = ["idle", "succeeded", "failed", "manual"] as const;
 
 export type TaskStatus = (typeof taskStatusOrder)[number];
 export type ProjectStatus = (typeof projectStatusOrder)[number];
 export type Priority = (typeof priorityOrder)[number];
 export type AgentStatus = (typeof agentStatusOrder)[number];
+export type PlannerState = (typeof plannerStateOrder)[number];
+export type PhaseStatus = "Planned" | "In Progress" | "Done";
+export type FeatureStatus = "Planned" | "In Progress" | "Done";
+export type EventType = "task" | "agent" | "workspace" | "system";
+export type AgentRunStatus = "Running" | "Succeeded" | "Failed";
 
 export interface PhaseRecord {
   id: string;
   title: string;
   goal: string;
-  status: "Planned" | "In Progress" | "Done";
+  status: PhaseStatus;
   sortOrder: number;
 }
 
@@ -37,8 +43,9 @@ export interface FeatureRecord {
   phaseId: string;
   title: string;
   summary: string;
-  status: "Planned" | "In Progress" | "Done";
+  status: FeatureStatus;
   priority: Priority;
+  sortOrder: number;
 }
 
 export interface TaskHistoryRecord {
@@ -81,16 +88,17 @@ export interface AgentRecord {
 export interface EventRecord {
   id: string;
   createdAt: string;
-  type: "task" | "agent" | "workspace" | "system";
+  type: EventType;
   summary: string;
   reason: string;
+  payload?: Record<string, unknown>;
 }
 
 export interface AgentRunRecord {
   id: string;
   agentId: string;
   taskId?: string;
-  status: "Running" | "Succeeded" | "Failed";
+  status: AgentRunStatus;
   summary: string;
   startedAt: string;
   endedAt?: string;
@@ -102,16 +110,18 @@ export interface WorkspaceFileRecord {
   changed?: boolean;
 }
 
+export interface PreviewLogRecord {
+  at: string;
+  line: string;
+}
+
 export interface PreviewRecord {
   status: "Running" | "Stopped" | "Errored";
   command: string;
   port: number;
   url: string;
   lastRestartedAt?: string;
-  recentLogs: Array<{
-    at: string;
-    line: string;
-  }>;
+  recentLogs: PreviewLogRecord[];
 }
 
 export interface WorkspaceRecord {
@@ -140,6 +150,12 @@ export interface ProjectRecord {
   status: ProjectStatus;
   currentFocus: string;
   vision: string;
+  plannerState: PlannerState;
+  plannerMessage?: string;
+  targetUser: string;
+  ideaPrompt: string;
+  stackPreferences: string[];
+  constraints: string[];
   mvp: MVPDefinitionRecord;
   phases: PhaseRecord[];
   features: FeatureRecord[];
@@ -149,6 +165,17 @@ export interface ProjectRecord {
   agentRuns: AgentRunRecord[];
   workspace: WorkspaceRecord;
   preview: PreviewRecord;
+}
+
+export interface ProjectListItem {
+  id: string;
+  name: string;
+  summary: string;
+  status: ProjectStatus;
+  progressPercent: number;
+  blockedTasks: number;
+  currentFocus: string;
+  plannerState: PlannerState;
 }
 
 export interface ProgressSlice {
@@ -179,4 +206,63 @@ export interface ProjectDashboardModel {
     blockedTasks: number;
     activeAgents: number;
   };
+}
+
+export interface ProjectIntakeInput {
+  name: string;
+  ideaPrompt: string;
+  targetUser: string;
+  constraints: string[];
+  stackPreferences: string[];
+}
+
+export interface PlannerDraftPhase {
+  title: string;
+  goal: string;
+}
+
+export interface PlannerDraftFeature {
+  phaseTitle: string;
+  title: string;
+  summary: string;
+  priority: Priority;
+}
+
+export interface PlannerDraftTask {
+  featureTitle: string;
+  title: string;
+  description: string;
+  priority: Priority;
+  acceptanceCriteria: string[];
+  dependsOn: string[];
+}
+
+export interface PlannerDraft {
+  vision: string;
+  goalStatement: string;
+  mvpSummary: string;
+  successDefinition: string;
+  laterScope: string[];
+  boundaryReasoning: string;
+  phases: PlannerDraftPhase[];
+  features: PlannerDraftFeature[];
+  tasks: PlannerDraftTask[];
+}
+
+export interface ProjectMvpUpdateInput {
+  vision: string;
+  goalStatement: string;
+  summary: string;
+  successDefinition: string;
+  boundaryReasoning: string;
+  laterScope: string[];
+  constraints: string[];
+}
+
+export interface EventInput {
+  projectId: string;
+  type: EventType;
+  summary: string;
+  reason: string;
+  payload?: Record<string, unknown>;
 }

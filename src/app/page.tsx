@@ -6,8 +6,8 @@ import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { listProjects } from "@/server/services/project-service";
 
-export default function HomePage() {
-  const projects = listProjects();
+export default async function HomePage() {
+  const projects = await listProjects();
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(249,115,22,0.12),transparent_24%),linear-gradient(180deg,#fcfaf6_0%,#f6f0e6_100%)] px-4 py-6 lg:px-6">
@@ -38,6 +38,15 @@ export default function HomePage() {
                 <span className="rounded-full bg-white/8 px-4 py-2">
                   Real Git workspace execution
                 </span>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Link
+                  href="/projects/new"
+                  className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-100"
+                >
+                  Create project
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
               </div>
             </div>
             <div className="grid gap-4">
@@ -107,52 +116,69 @@ export default function HomePage() {
 
           <div className="grid gap-5 xl:grid-cols-[1.5fr_0.9fr]">
             <div className="grid gap-5">
-              {projects.map((project) => (
-                <Card key={project.id} className="relative overflow-hidden">
-                  <div className="absolute inset-y-0 right-0 w-1/3 bg-[radial-gradient(circle_at_center,rgba(20,184,166,0.1),transparent_70%)]" />
-                  <div className="relative space-y-4">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <CardTitle>{project.name}</CardTitle>
-                          <Badge tone="warm">{project.status}</Badge>
+              {projects.length > 0 ? (
+                projects.map((project) => (
+                  <Card key={project.id} className="relative overflow-hidden">
+                    <div className="absolute inset-y-0 right-0 w-1/3 bg-[radial-gradient(circle_at_center,rgba(20,184,166,0.1),transparent_70%)]" />
+                    <div className="relative space-y-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <CardTitle>{project.name}</CardTitle>
+                            <Badge tone="warm">{project.status}</Badge>
+                          </div>
+                          <CardDescription>{project.summary}</CardDescription>
                         </div>
-                        <CardDescription>{project.summary}</CardDescription>
-                      </div>
-                      <Link
-                        href={`/projects/${project.id}`}
-                        className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
-                      >
-                        Open project
-                        <ArrowRight className="h-4 w-4" />
-                      </Link>
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr]">
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-sm font-medium text-slate-700">
-                          <span>Foundation progress</span>
-                          <span>{project.progressPercent}%</span>
-                        </div>
-                        <ProgressBar value={project.progressPercent} />
-                        <p className="text-sm leading-6 text-slate-600">{project.currentFocus}</p>
+                        <Link
+                          href={`/projects/${project.id}`}
+                          className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                        >
+                          Open project
+                          <ArrowRight className="h-4 w-4" />
+                        </Link>
                       </div>
 
-                      <div className="rounded-[24px] border border-slate-200 bg-slate-950/3 p-4">
-                        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
-                          Current blockers
-                        </p>
-                        <p className="mt-3 text-3xl font-semibold text-slate-950">
-                          {project.blockedTasks}
-                        </p>
-                        <p className="mt-1 text-sm text-slate-600">
-                          Blocked work is visible early so the next best tasks stay obvious.
-                        </p>
+                      <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr]">
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-sm font-medium text-slate-700">
+                            <span>Foundation progress</span>
+                            <span>{project.progressPercent}%</span>
+                          </div>
+                          <ProgressBar value={project.progressPercent} />
+                          <p className="text-sm leading-6 text-slate-600">{project.currentFocus}</p>
+                        </div>
+
+                        <div className="rounded-[24px] border border-slate-200 bg-slate-950/3 p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
+                            Current blockers
+                          </p>
+                          <p className="mt-3 text-3xl font-semibold text-slate-950">
+                            {project.blockedTasks}
+                          </p>
+                          <p className="mt-1 text-sm text-slate-600">
+                            Blocked work is visible early so the next best tasks stay obvious.
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  </Card>
+                ))
+              ) : (
+                <Card className="bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(236,253,245,0.86))]">
+                  <CardTitle>No projects yet</CardTitle>
+                  <CardDescription className="mt-3">
+                    Start with one idea and let Clonable propose the smallest credible MVP,
+                    then turn it into phases, features, and tasks you can actually ship.
+                  </CardDescription>
+                  <Link
+                    href="/projects/new"
+                    className="mt-6 inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                  >
+                    Create your first project
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
                 </Card>
-              ))}
+              )}
             </div>
 
             <Card>
@@ -164,10 +190,10 @@ export default function HomePage() {
                 <p>4. Phased implementation plan and executable app scaffold</p>
               </div>
               <Link
-                href="/projects/clonable-v1"
+                href={projects[0] ? `/projects/${projects[0].id}` : "/projects/new"}
                 className="mt-6 inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
               >
-                Explore the V1 workspace
+                {projects[0] ? "Explore the current workspace" : "Create the first workspace"}
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </Card>
