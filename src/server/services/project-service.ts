@@ -1,15 +1,23 @@
-import { sqliteProjectRepository } from "@/server/infrastructure/repositories/sqlite-project-repository";
 import type { ProjectRepository } from "@/server/domain/project-repository";
 import type {
+  AgentCreateInput,
+  AgentUpdateInput,
   FeatureCreateInput,
   PlannerDraft,
   PhaseCreateInput,
   ProjectIntakeInput,
   ProjectMvpUpdateInput,
   ProjectRecord,
+  ProjectRuntimeState,
   TaskCreateInput,
-  TaskStatusUpdateInput,
+  TaskOwnerInput,
+  TaskTransitionInput,
 } from "@/server/domain/project";
+import { sqliteProjectRepository } from "@/server/infrastructure/repositories/sqlite-project-repository";
+import {
+  ensureOrchestrationRunner,
+  runProjectOrchestrationCycle,
+} from "@/server/services/orchestration-service";
 import { generatePlannerDraft } from "@/server/services/planner-service";
 
 function buildFallbackMvp(input: ProjectIntakeInput): ProjectMvpUpdateInput {
@@ -22,18 +30,26 @@ function buildFallbackMvp(input: ProjectIntakeInput): ProjectMvpUpdateInput {
       "Planner output was unavailable, so this project starts with a manual draft based on the original idea prompt.",
     laterScope: [],
     constraints: input.constraints,
+    definitionOfDone: [
+      "The MVP boundary is explicit.",
+      "The first tasks are small enough to assign and review.",
+      "The workspace remains inspectable and recoverable.",
+    ],
   };
 }
 
 export async function listProjects() {
+  ensureOrchestrationRunner();
   return sqliteProjectRepository.listProjects();
 }
 
 export async function getProject(projectId: string) {
+  ensureOrchestrationRunner();
   return sqliteProjectRepository.getProject(projectId);
 }
 
 export async function getProjectDashboard(projectId: string) {
+  ensureOrchestrationRunner();
   return sqliteProjectRepository.getProjectDashboard(projectId);
 }
 
@@ -48,6 +64,7 @@ export async function createProjectFromIdea(
 ) {
   const repository = dependencies.repository ?? sqliteProjectRepository;
   const planner = dependencies.planner ?? generatePlannerDraft;
+  ensureOrchestrationRunner(repository);
   const project = await repository.createProject(input);
 
   await repository.recordEvent({
@@ -62,10 +79,23 @@ export async function createProjectFromIdea(
     },
   });
 
-  let draft: PlannerDraft;
-
   try {
-    draft = await planner(input);
+    const draft = await planner(input);
+    const updatedProject = await repository.savePlannerDraft(project.id, draft);
+
+    await repository.recordEvent({
+      projectId: project.id,
+      type: "task",
+      summary: "Planner draft generated",
+      reason: "The AI planner generated the first MVP and execution structure.",
+      payload: {
+        phases: updatedProject.phases.length,
+        features: updatedProject.features.length,
+        tasks: updatedProject.tasks.length,
+      },
+    });
+
+    return updatedProject;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown planner failure.";
     const updatedProject = await repository.savePlannerFailure(
@@ -86,22 +116,6 @@ export async function createProjectFromIdea(
 
     return updatedProject;
   }
-
-  const updatedProject = await repository.savePlannerDraft(project.id, draft);
-
-  await repository.recordEvent({
-    projectId: project.id,
-    type: "task",
-    summary: "Planner draft generated",
-    reason: "The AI planner generated the first MVP and execution structure.",
-    payload: {
-      phases: updatedProject.phases.length,
-      features: updatedProject.features.length,
-      tasks: updatedProject.tasks.length,
-    },
-  });
-
-  return updatedProject;
 }
 
 export async function updateProjectMvp(projectId: string, input: ProjectMvpUpdateInput) {
@@ -112,7 +126,7 @@ export async function updateProjectMvp(projectId: string, input: ProjectMvpUpdat
       projectId,
       type: "task",
       summary: "MVP draft updated",
-      reason: "The project goal and MVP boundary were edited manually.",
+      reason: "The project goal, MVP boundary, or definition of done were edited manually.",
     });
   }
 
@@ -170,27 +184,130 @@ export async function createProjectTask(projectId: string, input: TaskCreateInpu
     });
   }
 
+  if (project?.runtime.orchestrationEnabled) {
+    await runProjectOrchestrationCycle(projectId);
+  }
+
   return project;
 }
 
-export async function updateProjectTaskStatus(
+export async function transitionProjectTask(
   projectId: string,
   taskId: string,
-  input: TaskStatusUpdateInput,
+  input: TaskTransitionInput,
 ) {
-  const project = await sqliteProjectRepository.updateTaskStatus(projectId, taskId, input);
+  const project = await sqliteProjectRepository.transitionTask(projectId, taskId, input);
 
   if (project) {
     await sqliteProjectRepository.recordEvent({
       projectId,
       type: "task",
-      summary: "Task status updated",
-      reason: `Task ${taskId} moved to ${input.status}.`,
+      summary: "Task transitioned",
+      reason: `Task ${taskId} moved to ${input.state}.`,
       payload: {
         taskId,
-        status: input.status,
+        state: input.state,
+        agentId: input.agentId,
       },
     });
+
+    if (project.runtime.orchestrationEnabled) {
+      await runProjectOrchestrationCycle(projectId);
+    }
+  }
+
+  return project;
+}
+
+export async function assignProjectTaskOwner(
+  projectId: string,
+  taskId: string,
+  input: TaskOwnerInput,
+) {
+  const project = await sqliteProjectRepository.assignTaskOwner(projectId, taskId, input);
+
+  if (project) {
+    await sqliteProjectRepository.recordEvent({
+      projectId,
+      type: "task",
+      summary: "Task owner updated",
+      reason: `Task ${taskId} owner changed.`,
+      payload: {
+        taskId,
+        ownerAgentId: input.ownerAgentId,
+        agentId: input.agentId,
+      },
+    });
+
+    if (project.runtime.orchestrationEnabled) {
+      await runProjectOrchestrationCycle(projectId);
+    }
+  }
+
+  return project;
+}
+
+export async function createProjectAgent(projectId: string, input: AgentCreateInput) {
+  const project = await sqliteProjectRepository.createAgent(projectId, input);
+
+  if (project) {
+    await sqliteProjectRepository.recordEvent({
+      projectId,
+      type: "agent",
+      summary: "Agent created",
+      reason: `Created agent ${input.name}.`,
+      payload: {
+        policyRole: input.policyRole,
+      },
+    });
+  }
+
+  return project;
+}
+
+export async function updateProjectAgent(
+  projectId: string,
+  agentId: string,
+  input: AgentUpdateInput,
+) {
+  const project = await sqliteProjectRepository.updateAgent(projectId, agentId, input);
+
+  if (project) {
+    await sqliteProjectRepository.recordEvent({
+      projectId,
+      type: "agent",
+      summary: "Agent updated",
+      reason: `Updated agent ${input.name}.`,
+      payload: {
+        agentId,
+        policyRole: input.policyRole,
+        enabled: input.enabled,
+      },
+    });
+  }
+
+  return project;
+}
+
+export async function updateProjectRuntime(projectId: string, runtime: ProjectRuntimeState) {
+  const project = await sqliteProjectRepository.updateProjectRuntime(projectId, runtime);
+
+  if (project) {
+    await sqliteProjectRepository.recordEvent({
+      projectId,
+      type: "agent",
+      summary: "Runtime updated",
+      reason: runtime.orchestrationEnabled
+        ? "Policy orchestration was enabled for the project."
+        : "Policy orchestration was disabled for the project.",
+      payload: {
+        runnerStatus: runtime.runnerStatus,
+      },
+    });
+
+    if (runtime.orchestrationEnabled) {
+      await runProjectOrchestrationCycle(projectId);
+    }
   }
 
   return project;

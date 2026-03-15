@@ -27,13 +27,14 @@ describe("planner-service", () => {
             successDefinition: "Success",
             laterScope: ["Later"],
             boundaryReasoning: "Boundary",
+            definitionOfDone: ["Clear MVP"],
             phases: [{ title: "Phase 1", goal: "Goal 1" }],
             features: [
               {
                 phaseTitle: "Phase 1",
                 title: "Feature 1",
                 summary: "Feature summary",
-                priority: "P0",
+                priority: "high",
               },
             ],
             tasks: [
@@ -41,7 +42,7 @@ describe("planner-service", () => {
                 featureTitle: "Feature 1",
                 title: "Task 1",
                 description: "Task description",
-                priority: "P0",
+                priority: "high",
                 acceptanceCriteria: ["Works"],
                 dependsOn: [],
               },

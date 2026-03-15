@@ -11,6 +11,7 @@ const plannerDraftSchema = z.object({
   successDefinition: z.string().min(1),
   laterScope: z.array(z.string()),
   boundaryReasoning: z.string().min(1),
+  definitionOfDone: z.array(z.string().min(1)).min(1),
   phases: z
     .array(
       z.object({
@@ -25,7 +26,7 @@ const plannerDraftSchema = z.object({
         phaseTitle: z.string().min(1),
         title: z.string().min(1),
         summary: z.string().min(1),
-        priority: z.enum(["P0", "P1", "P2", "P3"]),
+        priority: z.enum(["blocker", "high", "normal", "low"]),
       }),
     )
     .min(1),
@@ -35,7 +36,7 @@ const plannerDraftSchema = z.object({
         featureTitle: z.string().min(1),
         title: z.string().min(1),
         description: z.string().min(1),
-        priority: z.enum(["P0", "P1", "P2", "P3"]),
+        priority: z.enum(["blocker", "high", "normal", "low"]),
         acceptanceCriteria: z.array(z.string()).min(1),
         dependsOn: z.array(z.string()),
       }),
@@ -81,7 +82,7 @@ export async function generatePlannerDraft(
   const response = await client.responses.parse({
     model,
     instructions:
-      "You are Clonable's Product Planner. Convert the idea into the smallest credible MVP, separate later scope, and produce a planning-first implementation draft. Keep the MVP tight, practical, and stable.",
+      "You are Clonable's Product Planner. Convert the idea into the smallest credible MVP, separate later scope, define a concise project definition of done, and produce a planning-first implementation draft. Keep the MVP tight, practical, and stable. Use priorities blocker/high/normal/low.",
     input: buildPlannerInput(project),
     text: {
       format: zodTextFormat(plannerDraftSchema, "planner_draft"),

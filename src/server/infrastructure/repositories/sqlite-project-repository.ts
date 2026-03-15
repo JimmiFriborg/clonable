@@ -5,25 +5,36 @@ import { asc, eq, inArray } from "drizzle-orm";
 
 import { defaultAgentTemplates } from "@/server/domain/default-agent-templates";
 import type { ProjectRepository } from "@/server/domain/project-repository";
-import type {
-  AgentRecord,
-  EventInput,
-  EventRecord,
-  FeatureCreateInput,
-  PlannerDraft,
-  PhaseCreateInput,
-  PreviewRecord,
-  PreviewLogRecord,
-  ProjectDashboardModel,
-  ProjectIntakeInput,
-  ProjectMvpUpdateInput,
-  ProjectRecord,
-  ProjectStatus,
-  TaskCreateInput,
-  TaskHistoryRecord,
-  TaskStatusUpdateInput,
-  WorkspaceFileRecord,
-  WorkspaceRecord,
+import {
+  allowedTaskTransitions,
+  type AgentCreateInput,
+  type AgentPolicyRole,
+  type AgentRecord,
+  type AgentRunRecord,
+  type AgentUpdateInput,
+  type EventInput,
+  type EventRecord,
+  type FeatureCreateInput,
+  type PlannerDraft,
+  type PreviewLogRecord,
+  type PreviewRecord,
+  type ProjectDashboardModel,
+  type ProjectIntakeInput,
+  type ProjectMvpUpdateInput,
+  type ProjectRecord,
+  type ProjectRuntimeState,
+  type ProjectStatus,
+  type TaskChangeLogEntry,
+  type TaskCreateInput,
+  type TaskOwnerInput,
+  type TaskPriority,
+  type TaskRecord,
+  type TaskRejectionLogEntry,
+  type TaskState,
+  type TaskTransitionInput,
+  type WorkspaceFileRecord,
+  type WorkspaceRecord,
+  rejectionCodeOrder,
 } from "@/server/domain/project";
 import { buildProjectDashboardModel, buildProjectListItem } from "@/server/services/dashboard-builder";
 import {
@@ -39,9 +50,26 @@ import {
   phasesTable,
   previewStateTable,
   projectsTable,
+  projectRuntimeTable,
   tasksTable,
   workspaceStateTable,
 } from "@/server/infrastructure/database/schema";
+
+const DEFAULT_DEFINITION_OF_DONE = [
+  "The goal and MVP boundary are explicit and visible.",
+  "The MVP has phases, features, and tasks that a user can understand without hidden reasoning.",
+  "The workspace and preview remain inspectable, recoverable, and tied to project progress.",
+];
+
+const ACTIVE_FEATURE_TASK_STATES: TaskState[] = [
+  "Ready",
+  "In_Progress",
+  "Blocked",
+  "Waiting",
+  "QA_Review",
+  "Split_Pending",
+  "Done",
+];
 
 function nowIso() {
   return new Date().toISOString();
@@ -76,6 +104,82 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
   }
 }
 
+function migrateLegacyTaskState(status: string | null | undefined): TaskState {
+  switch (status) {
+    case "Inbox":
+    case "Planned":
+      return "Backlog";
+    case "Ready":
+      return "Ready";
+    case "In Progress":
+      return "In_Progress";
+    case "Review":
+      return "QA_Review";
+    case "Blocked":
+      return "Blocked";
+    case "Done":
+      return "Done";
+    default:
+      return "Backlog";
+  }
+}
+
+function migrateLegacyPriority(
+  priority: string | null | undefined,
+  state: TaskState,
+): TaskPriority {
+  if (state === "Blocked") {
+    return "blocker";
+  }
+
+  switch (priority) {
+    case "P0":
+      return "high";
+    case "P1":
+      return "normal";
+    case "P2":
+    case "P3":
+      return "low";
+    case "blocker":
+    case "high":
+    case "normal":
+    case "low":
+      return priority;
+    default:
+      return "normal";
+  }
+}
+
+function legacyStatusFromState(state: TaskState) {
+  switch (state) {
+    case "Backlog":
+      return "Planned";
+    case "Ready":
+      return "Ready";
+    case "In_Progress":
+      return "In Progress";
+    case "QA_Review":
+      return "Review";
+    case "Blocked":
+      return "Blocked";
+    case "Done":
+      return "Done";
+    case "Waiting":
+    case "Split_Pending":
+      return "Blocked";
+    default:
+      return "Planned";
+  }
+}
+
+function buildLegacyHistory(task: TaskRecord) {
+  return task.changeLog.map((entry) => ({
+    at: entry.timestamp,
+    summary: entry.field,
+    reason: `${entry.from ?? "empty"} -> ${entry.to ?? "empty"}`,
+  }));
+}
+
 function defaultPlannerMessage(plannerState: ProjectRecord["plannerState"]) {
   if (plannerState === "failed") {
     return "Planner was unavailable. Continue by defining the MVP manually.";
@@ -90,22 +194,6 @@ function defaultPlannerMessage(plannerState: ProjectRecord["plannerState"]) {
   }
 
   return undefined;
-}
-
-function getDefaultAgentStatus(name: string): AgentRecord["status"] {
-  if (name === "Fixer") {
-    return "paused";
-  }
-
-  if (
-    name === "Product Planner" ||
-    name === "Project Manager" ||
-    name === "Documentation Agent"
-  ) {
-    return "active";
-  }
-
-  return "ready";
 }
 
 function buildWorkspaceState(slug: string): WorkspaceRecord {
@@ -136,6 +224,244 @@ function buildPreviewState(): PreviewRecord {
   };
 }
 
+function buildRuntimeState(): ProjectRuntimeState {
+  return {
+    orchestrationEnabled: false,
+    runnerStatus: "idle",
+  };
+}
+
+function createChangeLogEntry(
+  agentId: string,
+  field: string,
+  from: string | null,
+  to: string | null,
+): TaskChangeLogEntry {
+  return {
+    timestamp: nowIso(),
+    agentId,
+    field,
+    from,
+    to,
+  };
+}
+
+function createRejectionLogEntry(
+  agentId: string,
+  rejectionReasonCode: (typeof rejectionCodeOrder)[number],
+  rejectionNote: string,
+  attemptedTransition?: string,
+  attemptedField?: string,
+): TaskRejectionLogEntry {
+  return {
+    timestamp: nowIso(),
+    agentId,
+    rejectionReasonCode,
+    rejectionNote,
+    attemptedTransition,
+    attemptedField,
+  };
+}
+
+function countQaFailures(task: TaskRecord) {
+  return task.changeLog.filter(
+    (entry) => entry.field === "state" && entry.from === "QA_Review" && entry.to === "Ready",
+  ).length;
+}
+
+function dependenciesSatisfied(task: TaskRecord, project: ProjectRecord) {
+  const taskById = new Map(project.tasks.map((candidate) => [candidate.id, candidate]));
+  return task.dependencies
+    .filter((dependencyId) => !task.optionalDependencies.includes(dependencyId))
+    .every((dependencyId) => taskById.get(dependencyId)?.state === "Done");
+}
+
+function parentIsBlocked(task: TaskRecord, project: ProjectRecord) {
+  if (!task.parentTaskId) {
+    return false;
+  }
+
+  return project.tasks.find((candidate) => candidate.id === task.parentTaskId)?.state === "Blocked";
+}
+
+function getAgentWipLimit(agent: AgentRecord) {
+  if (agent.policyRole === "orchestrator" || agent.wipLimit === 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  if (typeof agent.wipLimit === "number") {
+    return agent.wipLimit;
+  }
+
+  return agent.policyRole === "tester" ? 3 : 1;
+}
+
+function hasWipCapacity(project: ProjectRecord, agent: AgentRecord) {
+  const activeStates =
+    agent.policyRole === "tester" ? ["QA_Review", "In_Progress"] : ["In_Progress"];
+  const currentLoad = project.tasks.filter(
+    (task) => task.ownerAgentId === agent.id && activeStates.includes(task.state),
+  ).length;
+
+  return currentLoad < getAgentWipLimit(agent);
+}
+
+function getOrchestratorAgent(project: ProjectRecord) {
+  return (
+    project.agents.find((agent) => agent.policyRole === "orchestrator" && agent.enabled) ??
+    project.agents.find((agent) => agent.policyRole === "orchestrator") ??
+    project.agents[0]
+  );
+}
+
+function getTesterAgent(project: ProjectRecord) {
+  return (
+    project.agents.find((agent) => agent.policyRole === "tester" && agent.enabled) ??
+    project.agents.find((agent) => agent.policyRole === "tester")
+  );
+}
+
+function syncAgentCurrentTasks(project: ProjectRecord) {
+  const activeTaskByAgent = new Map<string, string>();
+  const taskPriority = new Map<TaskState, number>([
+    ["In_Progress", 0],
+    ["QA_Review", 1],
+    ["Ready", 2],
+    ["Blocked", 3],
+    ["Waiting", 4],
+    ["Split_Pending", 5],
+    ["Backlog", 6],
+    ["Done", 7],
+  ]);
+
+  const sortedTasks = [...project.tasks].sort((left, right) => {
+    const leftRank = taskPriority.get(left.state) ?? 999;
+    const rightRank = taskPriority.get(right.state) ?? 999;
+    return leftRank - rightRank || right.lastUpdated.localeCompare(left.lastUpdated);
+  });
+
+  for (const task of sortedTasks) {
+    if (task.ownerAgentId && task.state !== "Done" && !activeTaskByAgent.has(task.ownerAgentId)) {
+      activeTaskByAgent.set(task.ownerAgentId, task.id);
+    }
+  }
+
+  return {
+    ...project,
+    agents: project.agents.map((agent) => ({
+      ...agent,
+      currentTaskId: activeTaskByAgent.get(agent.id),
+    })),
+  };
+}
+
+function syncProjectState(project: ProjectRecord): ProjectRecord {
+  const features = project.features.map((feature) => {
+    const tasks = project.tasks.filter((task) => task.featureId === feature.id);
+
+    if (tasks.length === 0) {
+      return feature;
+    }
+
+    if (tasks.every((task) => task.state === "Done")) {
+      return {
+        ...feature,
+        status: "Done" as const,
+      };
+    }
+
+    if (tasks.some((task) => ACTIVE_FEATURE_TASK_STATES.includes(task.state) && task.state !== "Backlog")) {
+      return {
+        ...feature,
+        status: "In Progress" as const,
+      };
+    }
+
+    return {
+      ...feature,
+      status: "Planned" as const,
+    };
+  });
+
+  const featuresById = new Map(features.map((feature) => [feature.id, feature]));
+  const phases = project.phases.map((phase) => {
+    const tasks = project.tasks.filter((task) => task.phaseId === phase.id);
+
+    if (tasks.length === 0) {
+      return phase;
+    }
+
+    if (tasks.every((task) => task.state === "Done")) {
+      return {
+        ...phase,
+        status: "Done" as const,
+      };
+    }
+
+    const phaseFeatures = features.filter((feature) => feature.phaseId === phase.id);
+    const hasStartedFeature = phaseFeatures.some(
+      (feature) => featuresById.get(feature.id)?.status === "In Progress",
+    );
+
+    if (hasStartedFeature || tasks.some((task) => task.state !== "Backlog")) {
+      return {
+        ...phase,
+        status: "In Progress" as const,
+      };
+    }
+
+    return {
+      ...phase,
+      status: "Planned" as const,
+    };
+  });
+
+  const syncedProject = syncAgentCurrentTasks({
+    ...project,
+    features,
+    phases,
+  });
+  const dashboard = buildProjectDashboardModel(syncedProject);
+
+  let currentFocus = project.currentFocus;
+  if (syncedProject.phases.length === 0) {
+    currentFocus = "Define the first MVP phase.";
+  } else if (syncedProject.features.length === 0) {
+    currentFocus = `Break ${syncedProject.phases[0]?.title ?? "the MVP"} into features.`;
+  } else if (syncedProject.tasks.length === 0) {
+    currentFocus = `Create the first task for ${syncedProject.features[0]?.title ?? "the MVP"}.`;
+  } else if (dashboard.blockers[0]) {
+    currentFocus = `Resolve ${dashboard.blockers[0].title}.`;
+  } else if (dashboard.nextTasks[0]) {
+    currentFocus = `Focus on ${dashboard.nextTasks[0].title}.`;
+  } else if (
+    dashboard.counts.totalTasks > 0 &&
+    dashboard.counts.doneTasks === dashboard.counts.totalTasks
+  ) {
+    currentFocus = "Review completed MVP work and decide the next slice.";
+  }
+
+  let status: ProjectStatus = "Planning";
+  if (syncedProject.tasks.length === 0 || syncedProject.tasks.every((task) => task.state === "Backlog")) {
+    status = "Planning";
+  } else if (
+    syncedProject.tasks.length > 0 &&
+    syncedProject.tasks.every((task) => task.state === "Done")
+  ) {
+    status = "Review";
+  } else if (
+    syncedProject.tasks.some((task) => ["Ready", "In_Progress", "Blocked", "Waiting", "QA_Review", "Split_Pending"].includes(task.state))
+  ) {
+    status = "Building";
+  }
+
+  return {
+    ...syncedProject,
+    status,
+    currentFocus,
+  };
+}
+
 function buildDefaultProject(input: ProjectIntakeInput, slug: string): ProjectRecord {
   const createdAt = nowIso();
   const projectId = randomId("project");
@@ -155,6 +481,7 @@ function buildDefaultProject(input: ProjectIntakeInput, slug: string): ProjectRe
     ideaPrompt: input.ideaPrompt,
     stackPreferences: input.stackPreferences,
     constraints: input.constraints,
+    definitionOfDone: DEFAULT_DEFINITION_OF_DONE,
     mvp: {
       goalStatement: input.ideaPrompt,
       summary: "",
@@ -169,7 +496,6 @@ function buildDefaultProject(input: ProjectIntakeInput, slug: string): ProjectRe
     agents: defaultAgentTemplates.map((template) => ({
       ...template,
       id: randomId("agent"),
-      status: getDefaultAgentStatus(template.name),
     })),
     events: [
       {
@@ -181,141 +507,547 @@ function buildDefaultProject(input: ProjectIntakeInput, slug: string): ProjectRe
       },
     ],
     agentRuns: [],
+    runtime: buildRuntimeState(),
     workspace,
     preview: buildPreviewState(),
   };
 }
 
-function createTaskHistory(summary: string, reason: string): TaskHistoryRecord[] {
-  return [
-    {
-      at: nowIso(),
-      summary,
-      reason,
-    },
-  ];
-}
+function rejectTaskChange(
+  project: ProjectRecord,
+  taskId: string,
+  agentId: string,
+  rejectionReasonCode: TaskRejectionLogEntry["rejectionReasonCode"],
+  rejectionNote: string,
+  attemptedTransition?: string,
+  attemptedField?: string,
+) {
+  const orchestrator = getOrchestratorAgent(project);
+  const timestamp = nowIso();
 
-function createTaskHistoryEntry(summary: string, reason: string): TaskHistoryRecord {
-  return {
-    at: nowIso(),
-    summary,
-    reason,
-  };
-}
-
-function hasStartedTask(project: ProjectRecord, scopeId: string, key: "phaseId" | "featureId") {
-  return project.tasks.some(
-    (task) =>
-      task[key] === scopeId &&
-      ["In Progress", "Review", "Blocked", "Done"].includes(task.status),
-  );
-}
-
-function syncProjectState(project: ProjectRecord): ProjectRecord {
-  const features = project.features.map((feature) => {
-    const tasks = project.tasks.filter((task) => task.featureId === feature.id);
-
-    if (tasks.length === 0) {
-      return feature;
-    }
-
-    if (tasks.every((task) => task.status === "Done")) {
-      return {
-        ...feature,
-        status: "Done" as const,
-      };
-    }
-
-    if (hasStartedTask(project, feature.id, "featureId")) {
-      return {
-        ...feature,
-        status: "In Progress" as const,
-      };
-    }
-
-    return {
-      ...feature,
-      status: feature.status === "Done" ? "Planned" : feature.status,
-    };
-  });
-
-  const featuresById = new Map(features.map((feature) => [feature.id, feature]));
-  const phases = project.phases.map((phase) => {
-    const tasks = project.tasks.filter((task) => task.phaseId === phase.id);
-
-    if (tasks.length === 0) {
-      return phase;
-    }
-
-    if (tasks.every((task) => task.status === "Done")) {
-      return {
-        ...phase,
-        status: "Done" as const,
-      };
-    }
-
-    const phaseFeatures = features.filter((feature) => feature.phaseId === phase.id);
-    const hasStartedFeature = phaseFeatures.some(
-      (feature) => featuresById.get(feature.id)?.status === "In Progress",
-    );
-
-    if (hasStartedFeature || hasStartedTask(project, phase.id, "phaseId")) {
-      return {
-        ...phase,
-        status: "In Progress" as const,
-      };
-    }
-
-    return {
-      ...phase,
-      status: phase.status === "Done" ? "Planned" : phase.status,
-    };
-  });
-
-  const syncedProject = {
+  return syncProjectState({
     ...project,
-    features,
+    tasks: project.tasks.map((task) => {
+      if (task.id !== taskId) {
+        return task;
+      }
+
+      const nextChangeLog =
+        orchestrator && task.ownerAgentId !== orchestrator.id
+          ? [
+              ...task.changeLog,
+              {
+                timestamp,
+                agentId,
+                field: "ownerAgentId",
+                from: task.ownerAgentId ?? null,
+                to: orchestrator.id,
+              },
+            ]
+          : task.changeLog;
+
+      return {
+        ...task,
+        ownerAgentId: orchestrator?.id ?? task.ownerAgentId,
+        lastUpdated: timestamp,
+        changeLog: nextChangeLog,
+        rejectionLog: [
+          ...task.rejectionLog,
+          createRejectionLogEntry(
+            agentId,
+            rejectionReasonCode,
+            rejectionNote,
+            attemptedTransition,
+            attemptedField,
+          ),
+        ],
+      };
+    }),
+  });
+}
+
+function appendNote(existing: string, note?: string) {
+  const trimmed = note?.trim();
+  if (!trimmed) {
+    return existing;
+  }
+
+  return existing ? `${existing}\n\n${trimmed}` : trimmed;
+}
+
+function applyTaskTransitionToProject(
+  project: ProjectRecord,
+  taskId: string,
+  input: TaskTransitionInput,
+): ProjectRecord {
+  const task = project.tasks.find((candidate) => candidate.id === taskId);
+  const agent = project.agents.find((candidate) => candidate.id === input.agentId);
+  const orchestrator = getOrchestratorAgent(project);
+  const tester = getTesterAgent(project);
+
+  if (!task || !agent) {
+    return project;
+  }
+
+  const currentState = task.state;
+  const nextState = input.state;
+  const allowed =
+    (allowedTaskTransitions[currentState] ?? []).includes(nextState) ||
+    (currentState !== "Done" && nextState === "Blocked");
+  const isOverride = currentState === "Done" && agent.policyRole === "orchestrator";
+
+  if (!allowed && !isOverride) {
+    return rejectTaskChange(
+      project,
+      taskId,
+      input.agentId,
+      "INVALID_TRANSITION",
+      `${currentState} -> ${nextState} is not allowed by policy.`,
+      `${currentState} -> ${nextState}`,
+    );
+  }
+
+  if (
+    (currentState === "Waiting" && nextState === "Blocked") ||
+    (currentState === "Blocked" && nextState === "Waiting")
+  ) {
+    if (agent.policyRole !== "orchestrator") {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "ORCHESTRATOR_REQUIRED",
+        "Only the Orchestrator may convert Waiting and Blocked tasks.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+  }
+
+  if (nextState === "Done") {
+    if (!(currentState === "QA_Review" && agent.policyRole === "tester") && agent.policyRole !== "orchestrator") {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "UNAUTHORIZED",
+        "Only Tester approval or an Orchestrator override may move a task to Done.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+  }
+
+  if (nextState === "Ready" && currentState === "Backlog") {
+    if (agent.policyRole !== "orchestrator") {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "ORCHESTRATOR_REQUIRED",
+        "The Orchestrator must assign an owner before Backlog moves to Ready.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+
+    if (!task.ownerAgentId) {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "OWNER_MISSING",
+        "A Ready task requires an owner.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+
+    if (!dependenciesSatisfied(task, project)) {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "DEPENDENCY_NOT_DONE",
+        "Required dependencies must be Done before a task becomes Ready.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+  }
+
+  if (nextState === "In_Progress") {
+    if (task.ownerAgentId !== input.agentId) {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "UNAUTHORIZED",
+        "Only the assigned owner may start a Ready task.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+
+    if (!task.ownerAgentId) {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "OWNER_MISSING",
+        "A task must have an owner before work starts.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+
+    if (!dependenciesSatisfied(task, project)) {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "DEPENDENCY_NOT_DONE",
+        "Required dependencies are not Done yet.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+
+    if (parentIsBlocked(task, project)) {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "CHECKLIST_FAIL",
+        "Parent task is Blocked.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+
+    if (!hasWipCapacity(project, agent)) {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "WIP_EXCEEDED",
+        "Agent WIP limit exceeded.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+  }
+
+  if (nextState === "QA_Review") {
+    if (task.ownerAgentId !== input.agentId) {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "UNAUTHORIZED",
+        "Only the implementation owner may hand work to QA.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+
+    if (task.acceptanceCriteria.length === 0) {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "CHECKLIST_FAIL",
+        "Acceptance criteria are required for QA entry.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+
+    if (!dependenciesSatisfied(task, project)) {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "DEPENDENCY_NOT_DONE",
+        "All dependencies must be Done before QA.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+
+    if (task.relatedFiles.length === 0 && task.artifacts.length === 0 && !task.notes.trim()) {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "CHECKLIST_FAIL",
+        "QA entry requires a testable artifact, related file, or implementation note.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+  }
+
+  if (nextState === "Ready" && currentState === "QA_Review") {
+    if (agent.policyRole !== "tester") {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "UNAUTHORIZED",
+        "Only the Tester may return QA work for rework.",
+        `${currentState} -> ${nextState}`,
+      );
+    }
+
+    if (!task.lastImplementationOwnerAgentId) {
+      return rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "MISSING_FIELD",
+        "lastImplementationOwnerAgentId is required on QA rework.",
+        `${currentState} -> ${nextState}`,
+        "lastImplementationOwnerAgentId",
+      );
+    }
+  }
+
+  if (nextState === "Blocked" && !input.blockerReason?.trim()) {
+    return rejectTaskChange(
+      project,
+      taskId,
+      input.agentId,
+      "MISSING_FIELD",
+      "Blocked tasks require blockerReason.",
+      `${currentState} -> ${nextState}`,
+      "blockerReason",
+    );
+  }
+
+  if (nextState === "Waiting" && !input.waitingReason?.trim()) {
+    return rejectTaskChange(
+      project,
+      taskId,
+      input.agentId,
+      "MISSING_FIELD",
+      "Waiting tasks require waitingReason.",
+      `${currentState} -> ${nextState}`,
+      "waitingReason",
+    );
+  }
+
+  const timestamp = nowIso();
+  const nextTasks = project.tasks.map((candidate) => {
+    if (candidate.id !== taskId) {
+      return candidate;
+    }
+
+    let ownerAgentId = candidate.ownerAgentId;
+    let blockerReason = nextState === "Blocked" ? input.blockerReason?.trim() : undefined;
+    let waitingReason = nextState === "Waiting" ? input.waitingReason?.trim() : undefined;
+    let lastImplementationOwnerAgentId = candidate.lastImplementationOwnerAgentId;
+    let reviewDate = nextState === "Waiting" ? input.reviewDate?.trim() : undefined;
+    let nextRole: AgentPolicyRole | undefined = candidate.nextRole;
+    let completedAt = candidate.completedAt;
+    let finalState = nextState;
+
+    if (nextState === "Blocked" || nextState === "Split_Pending") {
+      ownerAgentId = orchestrator?.id;
+      nextRole = "orchestrator";
+    } else if (nextState === "QA_Review") {
+      ownerAgentId = tester?.id;
+      lastImplementationOwnerAgentId = input.agentId;
+      nextRole = "tester";
+    } else if (nextState === "Ready" && currentState === "QA_Review") {
+      ownerAgentId = candidate.lastImplementationOwnerAgentId;
+      nextRole = "builder";
+    } else if (nextState === "Done") {
+      ownerAgentId = input.agentId;
+      completedAt = timestamp;
+      nextRole = undefined;
+    } else if (nextState === "In_Progress") {
+      ownerAgentId = input.agentId;
+      nextRole = undefined;
+    } else if (nextState === "Ready" && currentState === "Blocked") {
+      blockerReason = undefined;
+    } else if (nextState === "Ready" && currentState === "Waiting") {
+      waitingReason = undefined;
+      reviewDate = undefined;
+    }
+
+    if (nextState === "Ready" && currentState === "QA_Review" && countQaFailures(candidate) >= 2) {
+      finalState = "Blocked";
+      ownerAgentId = orchestrator?.id;
+      blockerReason = "QA rejected the task three times. Orchestrator intervention required.";
+      waitingReason = undefined;
+      reviewDate = undefined;
+      nextRole = "orchestrator";
+      completedAt = undefined;
+    }
+
+    const finalNotes =
+      finalState === "Ready" && currentState === "QA_Review"
+        ? appendNote(candidate.notes, input.note ?? "QA requested rework.")
+        : appendNote(candidate.notes, input.note);
+
+    const changeLog = [...candidate.changeLog];
+    const pushChange = (field: string, from: string | null, to: string | null) => {
+      if (from !== to) {
+        changeLog.push({
+          timestamp,
+          agentId: input.agentId,
+          field,
+          from,
+          to,
+        });
+      }
+    };
+
+    pushChange("state", candidate.state, finalState);
+    pushChange("ownerAgentId", candidate.ownerAgentId ?? null, ownerAgentId ?? null);
+    pushChange("blockerReason", candidate.blockerReason ?? null, blockerReason ?? null);
+    pushChange("waitingReason", candidate.waitingReason ?? null, waitingReason ?? null);
+    pushChange(
+      "lastImplementationOwnerAgentId",
+      candidate.lastImplementationOwnerAgentId ?? null,
+      lastImplementationOwnerAgentId ?? null,
+    );
+    pushChange("notes", candidate.notes || null, finalNotes || null);
+
+    const updatedTask: TaskRecord = {
+      ...candidate,
+      state: finalState,
+      ownerAgentId,
+      blockerReason,
+      waitingReason,
+      lastImplementationOwnerAgentId,
+      notes: finalNotes,
+      reviewDate,
+      nextRole,
+      completedAt: finalState === "Done" ? completedAt : undefined,
+      lastUpdated: timestamp,
+      changeLog,
+    };
+
+    if (updatedTask.state !== "Backlog" && !updatedTask.ownerAgentId) {
+      return {
+        ...updatedTask,
+        rejectionLog: [
+          ...updatedTask.rejectionLog,
+          createRejectionLogEntry(
+            input.agentId,
+            "OWNER_MISSING",
+            "Non-Backlog tasks must keep an owner.",
+            `${currentState} -> ${nextState}`,
+          ),
+        ],
+      };
+    }
+
+    return updatedTask;
+  });
+
+  return syncProjectState({
+    ...project,
+    tasks: nextTasks,
+  });
+}
+
+function createDraftArtifacts(
+  project: ProjectRecord,
+  draft: PlannerDraft,
+): Pick<ProjectRecord, "phases" | "features" | "tasks"> {
+  const orchestrator = getOrchestratorAgent(project);
+  const phaseMap = new Map<string, string>();
+  const phases = draft.phases.map((phase, index) => {
+    const phaseId = `${project.id}-phase-${slugify(phase.title) || index + 1}`;
+    phaseMap.set(phase.title, phaseId);
+
+    return {
+      id: phaseId,
+      title: phase.title,
+      goal: phase.goal,
+      status: index === 0 ? "In Progress" : "Planned",
+      sortOrder: index + 1,
+    } as ProjectRecord["phases"][number];
+  });
+
+  const features = draft.features.map((feature, index) => ({
+    id: `${project.id}-feature-${slugify(feature.title) || index + 1}`,
+    phaseId: phaseMap.get(feature.phaseTitle) ?? phases[0]?.id ?? randomId("phase"),
+    title: feature.title,
+    summary: feature.summary,
+    status: "Planned" as const,
+    priority: feature.priority,
+    sortOrder: index + 1,
+  }));
+  const featureMap = new Map(features.map((feature) => [feature.title, feature]));
+
+  const taskIdByTitle = new Map<string, string>();
+  draft.tasks.forEach((task, index) => {
+    taskIdByTitle.set(task.title, `${project.id}-task-${slugify(task.title) || index + 1}`);
+  });
+
+  const tasks = draft.tasks.map((task, index) => {
+    const feature = featureMap.get(task.featureTitle) ?? features[0];
+    const dependencies = task.dependsOn
+      .map((dependencyTitle) => taskIdByTitle.get(dependencyTitle))
+      .filter((dependencyId): dependencyId is string => Boolean(dependencyId));
+    const createdAt = nowIso();
+
+    return {
+      id: taskIdByTitle.get(task.title) ?? `${project.id}-task-${index + 1}`,
+      phaseId: feature?.phaseId ?? phases[0]?.id ?? randomId("phase"),
+      featureId: feature?.id ?? randomId("feature"),
+      title: task.title,
+      description: task.description,
+      state: "Backlog" as const,
+      ownerAgentId: undefined,
+      priority: task.priority,
+      acceptanceCriteria: task.acceptanceCriteria,
+      lastUpdated: createdAt,
+      notes: "",
+      collectiveQa: undefined,
+      nextRole: "orchestrator",
+      parentTaskId: undefined,
+      subTaskIds: [],
+      dependencies,
+      optionalDependencies: [],
+      blockerReason: undefined,
+      waitingReason: undefined,
+      lastImplementationOwnerAgentId: undefined,
+      requiresUser: false,
+      reviewDate: undefined,
+      changeLog: [
+        createChangeLogEntry(orchestrator?.id ?? "system", "state", null, "Backlog"),
+      ],
+      rejectionLog: [],
+      relatedFiles: [],
+      artifacts: [],
+      completedAt: undefined,
+    } satisfies TaskRecord;
+  });
+
+  return { phases, features, tasks };
+}
+
+function mapDraftToProject(
+  project: ProjectRecord,
+  draft: PlannerDraft,
+  plannerState: ProjectRecord["plannerState"],
+  plannerMessage?: string,
+) {
+  const { phases, features, tasks } = createDraftArtifacts(project, draft);
+
+  return syncProjectState({
+    ...project,
+    summary: draft.mvpSummary,
+    status: "Planning",
+    currentFocus: "Review the MVP draft, definition of done, and task ownership policy.",
+    vision: draft.vision,
+    plannerState,
+    plannerMessage: plannerMessage ?? defaultPlannerMessage(plannerState),
+    definitionOfDone:
+      draft.definitionOfDone.length > 0 ? draft.definitionOfDone : DEFAULT_DEFINITION_OF_DONE,
+    mvp: {
+      goalStatement: draft.goalStatement,
+      summary: draft.mvpSummary,
+      successDefinition: draft.successDefinition,
+      laterScope: draft.laterScope,
+      boundaryReasoning: draft.boundaryReasoning,
+      constraints: project.constraints,
+    },
     phases,
-  };
-  const dashboard = buildProjectDashboardModel(syncedProject);
-
-  let currentFocus = project.currentFocus;
-  if (project.phases.length === 0) {
-    currentFocus = "Define the first phase for the MVP.";
-  } else if (project.features.length === 0) {
-    currentFocus = `Break ${project.phases[0]?.title ?? "the MVP"} into features.`;
-  } else if (project.tasks.length === 0) {
-    currentFocus = `Create the first actionable task for ${project.features[0]?.title ?? "the MVP"}.`;
-  } else if (dashboard.blockers[0]) {
-    currentFocus = `Resolve blockers on ${dashboard.blockers[0].title}.`;
-  } else if (dashboard.nextTasks[0]) {
-    currentFocus = `Focus on ${dashboard.nextTasks[0].title}.`;
-  } else if (
-    dashboard.counts.totalTasks > 0 &&
-    dashboard.counts.doneTasks === dashboard.counts.totalTasks
-  ) {
-    currentFocus = "Review completed MVP work and choose the next slice.";
-  }
-
-  let status: ProjectStatus = "Planning";
-  if (project.tasks.length === 0) {
-    status = "Planning";
-  } else if (dashboard.counts.doneTasks === dashboard.counts.totalTasks) {
-    status = "Review";
-  } else if (
-    project.tasks.some((task) =>
-      ["In Progress", "Review", "Blocked", "Done"].includes(task.status),
-    )
-  ) {
-    status = "Building";
-  }
-
-  return {
-    ...syncedProject,
-    status,
-    currentFocus,
-  };
+    features,
+    tasks,
+  });
 }
 
 function mapProjectRowsToRecord(
@@ -336,6 +1068,21 @@ function mapProjectRowsToRecord(
     .select()
     .from(mvpDefinitionsTable)
     .where(eq(mvpDefinitionsTable.projectId, projectId))
+    .get();
+  const runtimeRow = db
+    .select()
+    .from(projectRuntimeTable)
+    .where(eq(projectRuntimeTable.projectId, projectId))
+    .get();
+  const workspaceRow = db
+    .select()
+    .from(workspaceStateTable)
+    .where(eq(workspaceStateTable.projectId, projectId))
+    .get();
+  const previewRow = db
+    .select()
+    .from(previewStateTable)
+    .where(eq(previewStateTable.projectId, projectId))
     .get();
 
   const phases = db
@@ -364,7 +1111,7 @@ function mapProjectRowsToRecord(
       title: feature.title,
       summary: feature.summary,
       status: feature.status as ProjectRecord["features"][number]["status"],
-      priority: feature.priority as ProjectRecord["features"][number]["priority"],
+      priority: feature.priority as TaskPriority,
       sortOrder: feature.sortOrder,
     }));
 
@@ -374,23 +1121,58 @@ function mapProjectRowsToRecord(
     .where(eq(tasksTable.projectId, projectId))
     .orderBy(asc(tasksTable.sortOrder))
     .all()
-    .map((task) => ({
-      id: task.id,
-      phaseId: task.phaseId,
-      featureId: task.featureId,
-      title: task.title,
-      description: task.description,
-      status: task.status as ProjectRecord["tasks"][number]["status"],
-      priority: task.priority as ProjectRecord["tasks"][number]["priority"],
-      assigneeAgentId: task.assigneeAgentId ?? undefined,
-      dependencies: parseJson(task.dependencies, [] as string[]),
-      blockers: parseJson(task.blockers, [] as string[]),
-      acceptanceCriteria: parseJson(task.acceptanceCriteria, [] as string[]),
-      relatedFiles: parseJson(task.relatedFiles, [] as string[]),
-      artifacts: parseJson(task.artifacts, [] as string[]),
-      history: parseJson(task.history, [] as TaskHistoryRecord[]),
-      completedAt: task.completedAt ?? undefined,
-    }));
+    .map((task) => {
+      const state = task.state
+        ? (task.state as TaskState)
+        : migrateLegacyTaskState(task.status ?? undefined);
+      const blockerList = parseJson(task.blockers, [] as string[]);
+      const legacyHistory = parseJson(
+        task.history,
+        [] as Array<{ at: string; summary: string; reason: string }>,
+      );
+
+      return {
+        id: task.id,
+        phaseId: task.phaseId,
+        featureId: task.featureId,
+        title: task.title,
+        description: task.description,
+        state,
+        ownerAgentId: task.ownerAgentId ?? task.assigneeAgentId ?? undefined,
+        priority: migrateLegacyPriority(task.priority, state),
+        acceptanceCriteria: parseJson(task.acceptanceCriteria, [] as string[]),
+        lastUpdated:
+          task.lastUpdated !== "1970-01-01T00:00:00.000Z"
+            ? task.lastUpdated
+            : legacyHistory.at(-1)?.at ?? projectRow.updatedAt,
+        notes: task.notes || legacyHistory.at(-1)?.reason || "",
+        collectiveQa: task.collectiveQa ?? undefined,
+        nextRole: task.nextRole as AgentPolicyRole | undefined,
+        parentTaskId: task.parentTaskId ?? undefined,
+        subTaskIds: parseJson(task.subTaskIds, [] as string[]),
+        dependencies: parseJson(task.dependencies, [] as string[]),
+        optionalDependencies: parseJson(task.optionalDependencies, [] as string[]),
+        blockerReason: task.blockerReason ?? blockerList[0] ?? undefined,
+        waitingReason: task.waitingReason ?? undefined,
+        lastImplementationOwnerAgentId: task.lastImplementationOwnerAgentId ?? undefined,
+        requiresUser: task.requiresUser,
+        reviewDate: task.reviewDate ?? undefined,
+        changeLog:
+          parseJson(task.changeLog, [] as TaskChangeLogEntry[]).length > 0
+            ? parseJson(task.changeLog, [] as TaskChangeLogEntry[])
+            : legacyHistory.map((entry) => ({
+                timestamp: entry.at,
+                agentId: task.assigneeAgentId ?? "system",
+                field: "legacy",
+                from: null,
+                to: entry.summary,
+              })),
+        rejectionLog: parseJson(task.rejectionLog, [] as TaskRejectionLogEntry[]),
+        relatedFiles: parseJson(task.relatedFiles, [] as string[]),
+        artifacts: parseJson(task.artifacts, [] as string[]),
+        completedAt: task.completedAt ?? undefined,
+      };
+    });
 
   const agents = db
     .select()
@@ -402,12 +1184,17 @@ function mapProjectRowsToRecord(
       id: agent.id,
       name: agent.name,
       role: agent.role,
+      policyRole: agent.policyRole as AgentPolicyRole,
       model: agent.model,
       status: agent.status as AgentRecord["status"],
+      enabled: agent.enabled,
       instructionsSummary: agent.instructionsSummary,
+      instructions: agent.instructions,
       permissions: parseJson(agent.permissions, [] as string[]),
       boundaries: parseJson(agent.boundaries, [] as string[]),
       escalationRules: parseJson(agent.escalationRules, [] as string[]),
+      wipLimit: agent.wipLimit ?? undefined,
+      canWriteWorkspace: agent.canWriteWorkspace,
       currentTaskId: agent.currentTaskId ?? undefined,
     }));
 
@@ -430,31 +1217,30 @@ function mapProjectRowsToRecord(
     .select()
     .from(agentRunsTable)
     .where(eq(agentRunsTable.projectId, projectId))
-    .orderBy(asc(agentRunsTable.startedAt))
+    .orderBy(asc(agentRunsTable.createdAt))
     .all()
     .map((run) => ({
       id: run.id,
       agentId: run.agentId,
       taskId: run.taskId ?? undefined,
-      status: run.status as ProjectRecord["agentRuns"][number]["status"],
+      status: run.status as AgentRunRecord["status"],
+      trigger: run.trigger as AgentRunRecord["trigger"],
       summary: run.summary,
-      startedAt: run.startedAt,
+      reason: run.reason,
+      inputSummary: run.inputSummary ?? undefined,
+      outputSummary: run.outputSummary ?? undefined,
+      errorMessage: run.errorMessage ?? undefined,
+      changedFiles: parseJson(run.changedFiles, [] as string[]),
+      artifacts: parseJson(run.artifacts, [] as string[]),
+      branch: run.branch ?? undefined,
+      leaseOwner: run.leaseOwner ?? undefined,
+      leaseExpiresAt: run.leaseExpiresAt ?? undefined,
+      createdAt: run.createdAt || run.startedAt || projectRow.createdAt,
+      startedAt: run.startedAt ?? run.createdAt ?? undefined,
       endedAt: run.endedAt ?? undefined,
     }));
 
-  const workspaceRow = db
-    .select()
-    .from(workspaceStateTable)
-    .where(eq(workspaceStateTable.projectId, projectId))
-    .get();
-
-  const previewRow = db
-    .select()
-    .from(previewStateTable)
-    .where(eq(previewStateTable.projectId, projectId))
-    .get();
-
-  return {
+  const project: ProjectRecord = {
     id: projectRow.id,
     slug: projectRow.slug,
     name: projectRow.name,
@@ -463,11 +1249,14 @@ function mapProjectRowsToRecord(
     currentFocus: projectRow.currentFocus,
     vision: projectRow.vision,
     plannerState: projectRow.plannerState as ProjectRecord["plannerState"],
-    plannerMessage: projectRow.plannerMessage ?? defaultPlannerMessage(projectRow.plannerState as ProjectRecord["plannerState"]),
+    plannerMessage:
+      projectRow.plannerMessage ??
+      defaultPlannerMessage(projectRow.plannerState as ProjectRecord["plannerState"]),
     targetUser: projectRow.targetUser,
     ideaPrompt: projectRow.ideaPrompt,
     stackPreferences: parseJson(projectRow.stackPreferences, [] as string[]),
     constraints: parseJson(projectRow.constraints, [] as string[]),
+    definitionOfDone: parseJson(projectRow.definitionOfDone, DEFAULT_DEFINITION_OF_DONE),
     mvp: {
       goalStatement: mvpRow?.goalStatement ?? projectRow.ideaPrompt,
       summary: mvpRow?.summary ?? "",
@@ -482,6 +1271,14 @@ function mapProjectRowsToRecord(
     agents,
     events,
     agentRuns,
+    runtime: runtimeRow
+      ? {
+          orchestrationEnabled: runtimeRow.orchestrationEnabled,
+          runnerStatus: runtimeRow.runnerStatus as ProjectRuntimeState["runnerStatus"],
+          activeWriteRunId: runtimeRow.activeWriteRunId ?? undefined,
+          lastTickAt: runtimeRow.lastTickAt ?? undefined,
+        }
+      : buildRuntimeState(),
     workspace: workspaceRow
       ? {
           rootPath: workspaceRow.rootPath,
@@ -506,53 +1303,57 @@ function mapProjectRowsToRecord(
         }
       : buildPreviewState(),
   };
+
+  return syncProjectState(project);
 }
 
 function insertProjectGraph(db: AppDatabase, project: ProjectRecord) {
-  const now = nowIso();
+  const syncedProject = syncProjectState(project);
+  const timestamp = nowIso();
 
   db.insert(projectsTable)
     .values({
-      id: project.id,
-      slug: project.slug,
-      name: project.name,
-      summary: project.summary,
-      status: project.status,
-      currentFocus: project.currentFocus,
-      vision: project.vision,
-      plannerState: project.plannerState,
-      plannerMessage: project.plannerMessage ?? null,
-      targetUser: project.targetUser,
-      ideaPrompt: project.ideaPrompt,
-      stackPreferences: serializeJson(project.stackPreferences),
-      constraints: serializeJson(project.constraints),
-      workspacePath: project.workspace.rootPath,
-      repoProvider: project.workspace.repoProvider,
-      createdAt: now,
-      updatedAt: now,
+      id: syncedProject.id,
+      slug: syncedProject.slug,
+      name: syncedProject.name,
+      summary: syncedProject.summary,
+      status: syncedProject.status,
+      currentFocus: syncedProject.currentFocus,
+      vision: syncedProject.vision,
+      plannerState: syncedProject.plannerState,
+      plannerMessage: syncedProject.plannerMessage ?? null,
+      targetUser: syncedProject.targetUser,
+      ideaPrompt: syncedProject.ideaPrompt,
+      stackPreferences: serializeJson(syncedProject.stackPreferences),
+      constraints: serializeJson(syncedProject.constraints),
+      definitionOfDone: serializeJson(syncedProject.definitionOfDone),
+      workspacePath: syncedProject.workspace.rootPath,
+      repoProvider: syncedProject.workspace.repoProvider,
+      createdAt: timestamp,
+      updatedAt: timestamp,
     })
     .run();
 
   db.insert(mvpDefinitionsTable)
     .values({
-      projectId: project.id,
-      goalStatement: project.mvp.goalStatement,
-      summary: project.mvp.summary,
-      successDefinition: project.mvp.successDefinition,
-      laterScope: serializeJson(project.mvp.laterScope),
-      boundaryReasoning: project.mvp.boundaryReasoning,
-      constraints: serializeJson(project.mvp.constraints),
-      createdAt: now,
-      updatedAt: now,
+      projectId: syncedProject.id,
+      goalStatement: syncedProject.mvp.goalStatement,
+      summary: syncedProject.mvp.summary,
+      successDefinition: syncedProject.mvp.successDefinition,
+      laterScope: serializeJson(syncedProject.mvp.laterScope),
+      boundaryReasoning: syncedProject.mvp.boundaryReasoning,
+      constraints: serializeJson(syncedProject.mvp.constraints),
+      createdAt: timestamp,
+      updatedAt: timestamp,
     })
     .run();
 
-  if (project.phases.length > 0) {
+  if (syncedProject.phases.length > 0) {
     db.insert(phasesTable)
       .values(
-        project.phases.map((phase) => ({
+        syncedProject.phases.map((phase) => ({
           id: phase.id,
-          projectId: project.id,
+          projectId: syncedProject.id,
           title: phase.title,
           goal: phase.goal,
           status: phase.status,
@@ -562,12 +1363,12 @@ function insertProjectGraph(db: AppDatabase, project: ProjectRecord) {
       .run();
   }
 
-  if (project.features.length > 0) {
+  if (syncedProject.features.length > 0) {
     db.insert(featuresTable)
       .values(
-        project.features.map((feature) => ({
+        syncedProject.features.map((feature) => ({
           id: feature.id,
-          projectId: project.id,
+          projectId: syncedProject.id,
           phaseId: feature.phaseId,
           title: feature.title,
           summary: feature.summary,
@@ -579,88 +1380,121 @@ function insertProjectGraph(db: AppDatabase, project: ProjectRecord) {
       .run();
   }
 
-  if (project.tasks.length > 0) {
+  if (syncedProject.tasks.length > 0) {
     db.insert(tasksTable)
       .values(
-        project.tasks.map((task, index) => ({
+        syncedProject.tasks.map((task, index) => ({
           id: task.id,
-          projectId: project.id,
+          projectId: syncedProject.id,
           phaseId: task.phaseId,
           featureId: task.featureId,
           title: task.title,
           description: task.description,
-          status: task.status,
+          status: legacyStatusFromState(task.state),
+          state: task.state,
+          assigneeAgentId: task.ownerAgentId ?? null,
+          ownerAgentId: task.ownerAgentId ?? null,
           priority: task.priority,
-          assigneeAgentId: task.assigneeAgentId ?? null,
-          dependencies: serializeJson(task.dependencies),
-          blockers: serializeJson(task.blockers),
+          blockers: serializeJson(task.blockerReason ? [task.blockerReason] : []),
           acceptanceCriteria: serializeJson(task.acceptanceCriteria),
+          lastUpdated: task.lastUpdated,
+          notes: task.notes,
+          collectiveQa: task.collectiveQa ?? null,
+          nextRole: task.nextRole ?? null,
+          parentTaskId: task.parentTaskId ?? null,
+          subTaskIds: serializeJson(task.subTaskIds),
+          dependencies: serializeJson(task.dependencies),
+          optionalDependencies: serializeJson(task.optionalDependencies),
+          blockerReason: task.blockerReason ?? null,
+          waitingReason: task.waitingReason ?? null,
+          lastImplementationOwnerAgentId: task.lastImplementationOwnerAgentId ?? null,
+          requiresUser: task.requiresUser,
+          reviewDate: task.reviewDate ?? null,
+          history: serializeJson(buildLegacyHistory(task)),
+          changeLog: serializeJson(task.changeLog),
+          rejectionLog: serializeJson(task.rejectionLog),
           relatedFiles: serializeJson(task.relatedFiles),
           artifacts: serializeJson(task.artifacts),
-          history: serializeJson(task.history),
           completedAt: task.completedAt ?? null,
           sortOrder: index + 1,
-          createdAt: now,
-          updatedAt: now,
+          createdAt: timestamp,
+          updatedAt: timestamp,
         })),
       )
       .run();
   }
 
-  db.insert(agentsTable)
-    .values(
-      project.agents.map((agent) => ({
-        id: agent.id,
-        projectId: project.id,
-        name: agent.name,
-        role: agent.role,
-        model: agent.model,
-        status: agent.status,
-        instructionsSummary: agent.instructionsSummary,
-        permissions: serializeJson(agent.permissions),
-        boundaries: serializeJson(agent.boundaries),
-        escalationRules: serializeJson(agent.escalationRules),
-        currentTaskId: agent.currentTaskId ?? null,
-        isSystem: true,
-        createdAt: now,
-        updatedAt: now,
-      })),
-    )
+  if (syncedProject.agents.length > 0) {
+    db.insert(agentsTable)
+      .values(
+        syncedProject.agents.map((agent) => ({
+          id: agent.id,
+          projectId: syncedProject.id,
+          name: agent.name,
+          role: agent.role,
+          policyRole: agent.policyRole,
+          model: agent.model,
+          status: agent.status,
+          enabled: agent.enabled,
+          instructionsSummary: agent.instructionsSummary,
+          instructions: agent.instructions,
+          permissions: serializeJson(agent.permissions),
+          boundaries: serializeJson(agent.boundaries),
+          escalationRules: serializeJson(agent.escalationRules),
+          wipLimit: agent.wipLimit ?? null,
+          canWriteWorkspace: agent.canWriteWorkspace,
+          currentTaskId: agent.currentTaskId ?? null,
+          isSystem: true,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        })),
+      )
+      .run();
+  }
+
+  db.insert(projectRuntimeTable)
+    .values({
+      projectId: syncedProject.id,
+      orchestrationEnabled: syncedProject.runtime.orchestrationEnabled,
+      runnerStatus: syncedProject.runtime.runnerStatus,
+      activeWriteRunId: syncedProject.runtime.activeWriteRunId ?? null,
+      lastTickAt: syncedProject.runtime.lastTickAt ?? null,
+    })
     .run();
 
   db.insert(workspaceStateTable)
     .values({
-      projectId: project.id,
-      rootPath: project.workspace.rootPath,
-      repoProvider: project.workspace.repoProvider,
-      branch: project.workspace.branch,
-      lastCommit: project.workspace.lastCommit,
-      dirtyFiles: serializeJson(project.workspace.dirtyFiles),
-      files: serializeJson(project.workspace.files),
+      projectId: syncedProject.id,
+      rootPath: syncedProject.workspace.rootPath,
+      repoProvider: syncedProject.workspace.repoProvider,
+      branch: syncedProject.workspace.branch,
+      lastCommit: syncedProject.workspace.lastCommit,
+      dirtyFiles: serializeJson(syncedProject.workspace.dirtyFiles),
+      files: serializeJson(syncedProject.workspace.files),
     })
     .run();
 
   db.insert(previewStateTable)
     .values({
-      projectId: project.id,
-      status: project.preview.status,
-      command: project.preview.command,
-      port: project.preview.port,
-      url: project.preview.url,
-      pid: project.preview.pid ?? null,
-      logPath: project.preview.logPath ?? null,
-      lastExitCode: project.preview.lastExitCode ?? null,
-      lastRestartedAt: project.preview.lastRestartedAt ?? null,
-      recentLogs: serializeJson(project.preview.recentLogs),
+      projectId: syncedProject.id,
+      status: syncedProject.preview.status,
+      command: syncedProject.preview.command,
+      port: syncedProject.preview.port,
+      url: syncedProject.preview.url,
+      pid: syncedProject.preview.pid ?? null,
+      logPath: syncedProject.preview.logPath ?? null,
+      lastExitCode: syncedProject.preview.lastExitCode ?? null,
+      lastRestartedAt: syncedProject.preview.lastRestartedAt ?? null,
+      recentLogs: serializeJson(syncedProject.preview.recentLogs),
     })
     .run();
 
-  if (project.events.length > 0) {
+  if (syncedProject.events.length > 0) {
     db.insert(eventsTable)
       .values(
-        project.events.map((event) => ({
+        syncedProject.events.map((event) => ({
           id: event.id,
-          projectId: project.id,
+          projectId: syncedProject.id,
           type: event.type,
           summary: event.summary,
           reason: event.reason,
@@ -670,108 +1504,34 @@ function insertProjectGraph(db: AppDatabase, project: ProjectRecord) {
       )
       .run();
   }
-}
 
-function createDraftArtifacts(
-  projectId: string,
-  draft: PlannerDraft,
-): Pick<ProjectRecord, "phases" | "features" | "tasks"> {
-  const phaseMap = new Map<string, string>();
-  const phases = draft.phases.map((phase, index) => {
-    const phaseId = `${projectId}-phase-${slugify(phase.title) || index + 1}`;
-    phaseMap.set(phase.title, phaseId);
-
-    return {
-      id: phaseId,
-      title: phase.title,
-      goal: phase.goal,
-      status: index === 0 ? "In Progress" : "Planned",
-      sortOrder: index + 1,
-    } as ProjectRecord["phases"][number];
-  });
-
-  const featureMap = new Map<string, string>();
-  const features = draft.features.map((feature, index) => {
-    const featureId = `${projectId}-feature-${slugify(feature.title) || index + 1}`;
-    featureMap.set(feature.title, featureId);
-
-    return {
-      id: featureId,
-      phaseId: phaseMap.get(feature.phaseTitle) ?? phases[0]?.id ?? `${projectId}-phase-unassigned`,
-      title: feature.title,
-      summary: feature.summary,
-      status: "Planned",
-      priority: feature.priority,
-      sortOrder: index + 1,
-    } as ProjectRecord["features"][number];
-  });
-
-  const taskIdByTitle = new Map<string, string>();
-  draft.tasks.forEach((task, index) => {
-    taskIdByTitle.set(task.title, `${projectId}-task-${slugify(task.title) || index + 1}`);
-  });
-
-  const tasks = draft.tasks.map((task) => {
-    const feature = features.find((candidate) => candidate.title === task.featureTitle) ?? features[0];
-    const dependencies = task.dependsOn
-      .map((dependencyTitle) => taskIdByTitle.get(dependencyTitle))
-      .filter((dependencyId): dependencyId is string => Boolean(dependencyId));
-    const status = dependencies.length === 0 ? "Ready" : "Planned";
-
-    return {
-      id: taskIdByTitle.get(task.title) ?? randomId("task"),
-      phaseId: feature?.phaseId ?? phases[0]?.id ?? randomId("phase"),
-      featureId: feature?.id ?? randomId("feature"),
-      title: task.title,
-      description: task.description,
-      status,
-      priority: task.priority,
-      dependencies,
-      blockers: [],
-      acceptanceCriteria: task.acceptanceCriteria,
-      relatedFiles: [],
-      artifacts: [],
-      history: createTaskHistory(
-        "Task drafted",
-        "Generated by the planner from the project intake prompt.",
-      ),
-    } as ProjectRecord["tasks"][number];
-  });
-
-  return { phases, features, tasks };
-}
-
-function mapDraftToProject(
-  project: ProjectRecord,
-  draft: PlannerDraft,
-  plannerState: ProjectRecord["plannerState"],
-  plannerMessage?: string,
-) {
-  const { phases, features, tasks } = createDraftArtifacts(project.id, draft);
-  const nextReadyTask = tasks.find((task) => task.status === "Ready");
-
-  return {
-    ...project,
-    summary: draft.mvpSummary,
-    status: "Planning" as const,
-    currentFocus: nextReadyTask
-      ? `Review the MVP draft and start with ${nextReadyTask.title}.`
-      : "Review the MVP draft and confirm the first planning phase.",
-    vision: draft.vision,
-    plannerState,
-    plannerMessage: plannerMessage ?? defaultPlannerMessage(plannerState),
-    mvp: {
-      goalStatement: draft.goalStatement,
-      summary: draft.mvpSummary,
-      successDefinition: draft.successDefinition,
-      laterScope: draft.laterScope,
-      boundaryReasoning: draft.boundaryReasoning,
-      constraints: project.constraints,
-    },
-    phases,
-    features,
-    tasks,
-  };
+  if (syncedProject.agentRuns.length > 0) {
+    db.insert(agentRunsTable)
+      .values(
+        syncedProject.agentRuns.map((run) => ({
+          id: run.id,
+          projectId: syncedProject.id,
+          agentId: run.agentId,
+          taskId: run.taskId ?? null,
+          status: run.status,
+          trigger: run.trigger,
+          summary: run.summary,
+          reason: run.reason,
+          inputSummary: run.inputSummary ?? null,
+          outputSummary: run.outputSummary ?? null,
+          errorMessage: run.errorMessage ?? null,
+          changedFiles: serializeJson(run.changedFiles),
+          artifacts: serializeJson(run.artifacts),
+          branch: run.branch ?? null,
+          leaseOwner: run.leaseOwner ?? null,
+          leaseExpiresAt: run.leaseExpiresAt ?? null,
+          createdAt: run.createdAt,
+          startedAt: run.startedAt ?? run.createdAt,
+          endedAt: run.endedAt ?? null,
+        })),
+      )
+      .run();
+  }
 }
 
 export class SQLiteProjectRepository implements ProjectRepository {
@@ -801,6 +1561,16 @@ export class SQLiteProjectRepository implements ProjectRepository {
     return project ? buildProjectDashboardModel(project) : undefined;
   }
 
+  async saveProject(project: ProjectRecord) {
+    this.persistProjectGraph(project);
+    const persisted = await this.getProject(project.id);
+    if (!persisted) {
+      throw new Error(`Failed to persist project ${project.id}`);
+    }
+
+    return persisted;
+  }
+
   async createProject(input: ProjectIntakeInput) {
     const slug = await this.getUniqueSlug(input.name);
     const project = buildDefaultProject(input, slug);
@@ -809,7 +1579,7 @@ export class SQLiteProjectRepository implements ProjectRepository {
       insertProjectGraph(tx, project);
     });
 
-    return project;
+    return syncProjectState(project);
   }
 
   async savePlannerDraft(projectId: string, draft: PlannerDraft) {
@@ -831,15 +1601,19 @@ export class SQLiteProjectRepository implements ProjectRepository {
       throw new Error(`Project ${projectId} was not found`);
     }
 
-    const updatedProject = {
+    const updatedProject = syncProjectState({
       ...project,
       summary: fallback.summary,
-      status: "Planning" as const,
+      status: "Planning",
       currentFocus:
-        "Planner was unavailable. Review the manual MVP draft and define the smallest credible scope.",
+        "Planner was unavailable. Review the manual MVP draft and define ownership before execution.",
       vision: fallback.vision,
-      plannerState: "failed" as const,
+      plannerState: "failed",
       plannerMessage: reason,
+      definitionOfDone:
+        fallback.definitionOfDone.length > 0
+          ? fallback.definitionOfDone
+          : project.definitionOfDone,
       mvp: {
         goalStatement: fallback.goalStatement,
         summary: fallback.summary,
@@ -851,7 +1625,7 @@ export class SQLiteProjectRepository implements ProjectRepository {
       phases: [],
       features: [],
       tasks: [],
-    };
+    });
 
     this.persistProjectGraph(updatedProject);
     return updatedProject;
@@ -864,14 +1638,16 @@ export class SQLiteProjectRepository implements ProjectRepository {
       return undefined;
     }
 
-    const updatedProject = {
+    const updatedProject = syncProjectState({
       ...project,
       summary: input.summary,
       vision: input.vision,
       currentFocus:
-        "MVP draft updated. Confirm the boundary and move into the first planning task.",
-      plannerState: "manual" as const,
+        "MVP draft updated. Confirm the definition of done and route the first tasks.",
+      plannerState: "manual",
       plannerMessage: defaultPlannerMessage("manual"),
+      definitionOfDone:
+        input.definitionOfDone.length > 0 ? input.definitionOfDone : project.definitionOfDone,
       mvp: {
         goalStatement: input.goalStatement,
         summary: input.summary,
@@ -880,20 +1656,20 @@ export class SQLiteProjectRepository implements ProjectRepository {
         boundaryReasoning: input.boundaryReasoning,
         constraints: input.constraints,
       },
-    };
+    });
 
     this.persistProjectGraph(updatedProject);
     return updatedProject;
   }
 
-  async createPhase(projectId: string, input: PhaseCreateInput) {
+  async createPhase(projectId: string, input: { title: string; goal: string }) {
     const project = await this.getProject(projectId);
 
     if (!project) {
       return undefined;
     }
 
-    const updatedProject = syncProjectState({
+    return this.saveProject({
       ...project,
       phases: [
         ...project.phases,
@@ -906,9 +1682,6 @@ export class SQLiteProjectRepository implements ProjectRepository {
         },
       ],
     });
-
-    this.persistProjectGraph(updatedProject);
-    return updatedProject;
   }
 
   async createFeature(projectId: string, input: FeatureCreateInput) {
@@ -918,7 +1691,7 @@ export class SQLiteProjectRepository implements ProjectRepository {
       return undefined;
     }
 
-    const updatedProject = syncProjectState({
+    return this.saveProject({
       ...project,
       features: [
         ...project.features,
@@ -933,9 +1706,6 @@ export class SQLiteProjectRepository implements ProjectRepository {
         },
       ],
     });
-
-    this.persistProjectGraph(updatedProject);
-    return updatedProject;
   }
 
   async createTask(projectId: string, input: TaskCreateInput) {
@@ -946,6 +1716,7 @@ export class SQLiteProjectRepository implements ProjectRepository {
     }
 
     const feature = project.features.find((candidate) => candidate.id === input.featureId);
+    const orchestrator = getOrchestratorAgent(project);
 
     if (!feature) {
       return undefined;
@@ -954,8 +1725,9 @@ export class SQLiteProjectRepository implements ProjectRepository {
     const dependencies = input.dependencies.filter((dependencyId) =>
       project.tasks.some((task) => task.id === dependencyId),
     );
+    const createdAt = nowIso();
 
-    const updatedProject = syncProjectState({
+    return this.saveProject({
       ...project,
       tasks: [
         ...project.tasks,
@@ -965,62 +1737,177 @@ export class SQLiteProjectRepository implements ProjectRepository {
           featureId: feature.id,
           title: input.title,
           description: input.description,
-          status: dependencies.length === 0 ? "Ready" : "Planned",
+          state: "Backlog",
+          ownerAgentId: undefined,
           priority: input.priority,
-          dependencies,
-          blockers: [],
           acceptanceCriteria: input.acceptanceCriteria,
+          lastUpdated: createdAt,
+          notes: "",
+          collectiveQa: undefined,
+          nextRole: "orchestrator",
+          parentTaskId: undefined,
+          subTaskIds: [],
+          dependencies,
+          optionalDependencies: [],
+          blockerReason: undefined,
+          waitingReason: undefined,
+          lastImplementationOwnerAgentId: undefined,
+          requiresUser: input.requiresUser ?? false,
+          reviewDate: undefined,
+          changeLog: [
+            createChangeLogEntry(orchestrator?.id ?? "system", "state", null, "Backlog"),
+          ],
+          rejectionLog: [],
           relatedFiles: [],
           artifacts: [],
-          history: createTaskHistory(
-            "Task created",
-            "Added manually from the planning interface.",
-          ),
+          completedAt: undefined,
         },
       ],
     });
-
-    this.persistProjectGraph(updatedProject);
-    return updatedProject;
   }
 
-  async updateTaskStatus(projectId: string, taskId: string, input: TaskStatusUpdateInput) {
+  async transitionTask(projectId: string, taskId: string, input: TaskTransitionInput) {
     const project = await this.getProject(projectId);
 
     if (!project) {
       return undefined;
     }
 
-    const existingTask = project.tasks.find((task) => task.id === taskId);
+    const updatedProject = applyTaskTransitionToProject(project, taskId, input);
+    this.persistProjectGraph(updatedProject);
+    return updatedProject;
+  }
 
-    if (!existingTask) {
+  async assignTaskOwner(projectId: string, taskId: string, input: TaskOwnerInput) {
+    const project = await this.getProject(projectId);
+
+    if (!project) {
       return undefined;
     }
 
+    const agent = project.agents.find((candidate) => candidate.id === input.agentId);
+    const owner = project.agents.find((candidate) => candidate.id === input.ownerAgentId);
+    const task = project.tasks.find((candidate) => candidate.id === taskId);
+
+    if (!task || !agent) {
+      return undefined;
+    }
+
+    if (agent.policyRole !== "orchestrator") {
+      const rejected = rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "ORCHESTRATOR_REQUIRED",
+        "Only the Orchestrator may assign task owners.",
+        undefined,
+        "ownerAgentId",
+      );
+      this.persistProjectGraph(rejected);
+      return rejected;
+    }
+
+    if (!owner && input.ownerAgentId) {
+      return undefined;
+    }
+
+    if (!input.ownerAgentId && task.state !== "Backlog") {
+      const rejected = rejectTaskChange(
+        project,
+        taskId,
+        input.agentId,
+        "OWNER_MISSING",
+        "Only Backlog tasks may be left without an owner.",
+        undefined,
+        "ownerAgentId",
+      );
+      this.persistProjectGraph(rejected);
+      return rejected;
+    }
+
+    const timestamp = nowIso();
     const updatedProject = syncProjectState({
       ...project,
-      tasks: project.tasks.map((task) => {
-        if (task.id !== taskId) {
-          return task;
+      tasks: project.tasks.map((candidate) => {
+        if (candidate.id !== taskId) {
+          return candidate;
         }
 
         return {
-          ...task,
-          status: input.status,
-          completedAt: input.status === "Done" ? nowIso() : undefined,
-          history: [
-            ...task.history,
-            createTaskHistoryEntry(
-              `Status set to ${input.status}`,
-              `Updated manually from ${task.status} to ${input.status}.`,
-            ),
-          ],
+          ...candidate,
+          ownerAgentId: input.ownerAgentId,
+          lastUpdated: timestamp,
+          changeLog:
+            candidate.ownerAgentId === input.ownerAgentId
+              ? candidate.changeLog
+              : [
+                  ...candidate.changeLog,
+                  createChangeLogEntry(
+                    input.agentId,
+                    "ownerAgentId",
+                    candidate.ownerAgentId ?? null,
+                    input.ownerAgentId ?? null,
+                  ),
+                ],
         };
       }),
     });
 
     this.persistProjectGraph(updatedProject);
     return updatedProject;
+  }
+
+  async createAgent(projectId: string, input: AgentCreateInput) {
+    const project = await this.getProject(projectId);
+
+    if (!project) {
+      return undefined;
+    }
+
+    return this.saveProject({
+      ...project,
+      agents: [
+        ...project.agents,
+        {
+          ...input,
+          id: randomId("agent"),
+          currentTaskId: undefined,
+        },
+      ],
+    });
+  }
+
+  async updateAgent(projectId: string, agentId: string, input: AgentUpdateInput) {
+    const project = await this.getProject(projectId);
+
+    if (!project || !project.agents.some((agent) => agent.id === agentId)) {
+      return undefined;
+    }
+
+    return this.saveProject({
+      ...project,
+      agents: project.agents.map((agent) =>
+        agent.id === agentId
+          ? {
+              ...agent,
+              ...input,
+            }
+          : agent,
+      ),
+    });
+  }
+
+  async updateProjectRuntime(projectId: string, runtime: ProjectRuntimeState) {
+    const project = await this.getProject(projectId);
+
+    if (!project) {
+      return undefined;
+    }
+
+    return this.saveProject({
+      ...project,
+      runtime,
+    });
   }
 
   async updateWorkspaceState(projectId: string, workspace: WorkspaceRecord) {
@@ -1030,13 +1917,10 @@ export class SQLiteProjectRepository implements ProjectRepository {
       return undefined;
     }
 
-    const updatedProject = {
+    return this.saveProject({
       ...project,
       workspace,
-    };
-
-    this.persistProjectGraph(updatedProject);
-    return updatedProject;
+    });
   }
 
   async updatePreviewState(projectId: string, preview: PreviewRecord) {
@@ -1046,13 +1930,45 @@ export class SQLiteProjectRepository implements ProjectRepository {
       return undefined;
     }
 
-    const updatedProject = {
+    return this.saveProject({
       ...project,
       preview,
-    };
+    });
+  }
 
-    this.persistProjectGraph(updatedProject);
-    return updatedProject;
+  async addAgentRun(projectId: string, run: AgentRunRecord) {
+    const project = await this.getProject(projectId);
+
+    if (!project) {
+      return undefined;
+    }
+
+    return this.saveProject({
+      ...project,
+      agentRuns: [...project.agentRuns, run],
+    });
+  }
+
+  async updateAgentRun(projectId: string, runId: string, update: Partial<AgentRunRecord>) {
+    const project = await this.getProject(projectId);
+
+    if (!project) {
+      return undefined;
+    }
+
+    return this.saveProject({
+      ...project,
+      agentRuns: project.agentRuns.map((run) =>
+        run.id === runId
+          ? {
+              ...run,
+              ...update,
+              id: run.id,
+              agentId: update.agentId ?? run.agentId,
+            }
+          : run,
+      ),
+    });
   }
 
   async recordEvent(input: EventInput) {
@@ -1084,62 +2000,69 @@ export class SQLiteProjectRepository implements ProjectRepository {
 
   private persistProjectGraph(project: ProjectRecord) {
     this.database.db.transaction((tx) => {
+      const syncedProject = syncProjectState(project);
+      const timestamp = nowIso();
+
       tx.update(projectsTable)
         .set({
-          name: project.name,
-          summary: project.summary,
-          status: project.status,
-          currentFocus: project.currentFocus,
-          vision: project.vision,
-          plannerState: project.plannerState,
-          plannerMessage: project.plannerMessage ?? null,
-          targetUser: project.targetUser,
-          ideaPrompt: project.ideaPrompt,
-          stackPreferences: serializeJson(project.stackPreferences),
-          constraints: serializeJson(project.constraints),
-          workspacePath: project.workspace.rootPath,
-          repoProvider: project.workspace.repoProvider,
-          updatedAt: nowIso(),
+          name: syncedProject.name,
+          summary: syncedProject.summary,
+          status: syncedProject.status,
+          currentFocus: syncedProject.currentFocus,
+          vision: syncedProject.vision,
+          plannerState: syncedProject.plannerState,
+          plannerMessage: syncedProject.plannerMessage ?? null,
+          targetUser: syncedProject.targetUser,
+          ideaPrompt: syncedProject.ideaPrompt,
+          stackPreferences: serializeJson(syncedProject.stackPreferences),
+          constraints: serializeJson(syncedProject.constraints),
+          definitionOfDone: serializeJson(syncedProject.definitionOfDone),
+          workspacePath: syncedProject.workspace.rootPath,
+          repoProvider: syncedProject.workspace.repoProvider,
+          updatedAt: timestamp,
         })
-        .where(eq(projectsTable.id, project.id))
+        .where(eq(projectsTable.id, syncedProject.id))
         .run();
 
       tx.insert(mvpDefinitionsTable)
         .values({
-          projectId: project.id,
-          goalStatement: project.mvp.goalStatement,
-          summary: project.mvp.summary,
-          successDefinition: project.mvp.successDefinition,
-          laterScope: serializeJson(project.mvp.laterScope),
-          boundaryReasoning: project.mvp.boundaryReasoning,
-          constraints: serializeJson(project.mvp.constraints),
-          createdAt: nowIso(),
-          updatedAt: nowIso(),
+          projectId: syncedProject.id,
+          goalStatement: syncedProject.mvp.goalStatement,
+          summary: syncedProject.mvp.summary,
+          successDefinition: syncedProject.mvp.successDefinition,
+          laterScope: serializeJson(syncedProject.mvp.laterScope),
+          boundaryReasoning: syncedProject.mvp.boundaryReasoning,
+          constraints: serializeJson(syncedProject.mvp.constraints),
+          createdAt: timestamp,
+          updatedAt: timestamp,
         })
         .onConflictDoUpdate({
           target: mvpDefinitionsTable.projectId,
           set: {
-            goalStatement: project.mvp.goalStatement,
-            summary: project.mvp.summary,
-            successDefinition: project.mvp.successDefinition,
-            laterScope: serializeJson(project.mvp.laterScope),
-            boundaryReasoning: project.mvp.boundaryReasoning,
-            constraints: serializeJson(project.mvp.constraints),
-            updatedAt: nowIso(),
+            goalStatement: syncedProject.mvp.goalStatement,
+            summary: syncedProject.mvp.summary,
+            successDefinition: syncedProject.mvp.successDefinition,
+            laterScope: serializeJson(syncedProject.mvp.laterScope),
+            boundaryReasoning: syncedProject.mvp.boundaryReasoning,
+            constraints: serializeJson(syncedProject.mvp.constraints),
+            updatedAt: timestamp,
           },
         })
         .run();
 
-      tx.delete(tasksTable).where(eq(tasksTable.projectId, project.id)).run();
-      tx.delete(featuresTable).where(eq(featuresTable.projectId, project.id)).run();
-      tx.delete(phasesTable).where(eq(phasesTable.projectId, project.id)).run();
+      tx.delete(agentRunsTable).where(eq(agentRunsTable.projectId, syncedProject.id)).run();
+      tx.delete(eventsTable).where(eq(eventsTable.projectId, syncedProject.id)).run();
+      tx.delete(tasksTable).where(eq(tasksTable.projectId, syncedProject.id)).run();
+      tx.delete(featuresTable).where(eq(featuresTable.projectId, syncedProject.id)).run();
+      tx.delete(phasesTable).where(eq(phasesTable.projectId, syncedProject.id)).run();
+      tx.delete(agentsTable).where(eq(agentsTable.projectId, syncedProject.id)).run();
 
-      if (project.phases.length > 0) {
+      if (syncedProject.phases.length > 0) {
         tx.insert(phasesTable)
           .values(
-            project.phases.map((phase) => ({
+            syncedProject.phases.map((phase) => ({
               id: phase.id,
-              projectId: project.id,
+              projectId: syncedProject.id,
               title: phase.title,
               goal: phase.goal,
               status: phase.status,
@@ -1149,12 +2072,12 @@ export class SQLiteProjectRepository implements ProjectRepository {
           .run();
       }
 
-      if (project.features.length > 0) {
+      if (syncedProject.features.length > 0) {
         tx.insert(featuresTable)
           .values(
-            project.features.map((feature) => ({
+            syncedProject.features.map((feature) => ({
               id: feature.id,
-              projectId: project.id,
+              projectId: syncedProject.id,
               phaseId: feature.phaseId,
               title: feature.title,
               summary: feature.summary,
@@ -1166,60 +2089,192 @@ export class SQLiteProjectRepository implements ProjectRepository {
           .run();
       }
 
-      if (project.tasks.length > 0) {
+      if (syncedProject.tasks.length > 0) {
         tx.insert(tasksTable)
           .values(
-            project.tasks.map((task, index) => ({
+            syncedProject.tasks.map((task, index) => ({
               id: task.id,
-              projectId: project.id,
+              projectId: syncedProject.id,
               phaseId: task.phaseId,
               featureId: task.featureId,
               title: task.title,
               description: task.description,
-              status: task.status,
+              status: legacyStatusFromState(task.state),
+              state: task.state,
+              assigneeAgentId: task.ownerAgentId ?? null,
+              ownerAgentId: task.ownerAgentId ?? null,
               priority: task.priority,
-              assigneeAgentId: task.assigneeAgentId ?? null,
-              dependencies: serializeJson(task.dependencies),
-              blockers: serializeJson(task.blockers),
+              blockers: serializeJson(task.blockerReason ? [task.blockerReason] : []),
               acceptanceCriteria: serializeJson(task.acceptanceCriteria),
+              lastUpdated: task.lastUpdated,
+              notes: task.notes,
+              collectiveQa: task.collectiveQa ?? null,
+              nextRole: task.nextRole ?? null,
+              parentTaskId: task.parentTaskId ?? null,
+              subTaskIds: serializeJson(task.subTaskIds),
+              dependencies: serializeJson(task.dependencies),
+              optionalDependencies: serializeJson(task.optionalDependencies),
+              blockerReason: task.blockerReason ?? null,
+              waitingReason: task.waitingReason ?? null,
+              lastImplementationOwnerAgentId: task.lastImplementationOwnerAgentId ?? null,
+              requiresUser: task.requiresUser,
+              reviewDate: task.reviewDate ?? null,
+              history: serializeJson(buildLegacyHistory(task)),
+              changeLog: serializeJson(task.changeLog),
+              rejectionLog: serializeJson(task.rejectionLog),
               relatedFiles: serializeJson(task.relatedFiles),
               artifacts: serializeJson(task.artifacts),
-              history: serializeJson(task.history),
               completedAt: task.completedAt ?? null,
               sortOrder: index + 1,
-              createdAt: nowIso(),
-              updatedAt: nowIso(),
+              createdAt: timestamp,
+              updatedAt: timestamp,
             })),
           )
           .run();
       }
 
-      tx.update(workspaceStateTable)
-        .set({
-          rootPath: project.workspace.rootPath,
-          repoProvider: project.workspace.repoProvider,
-          branch: project.workspace.branch,
-          lastCommit: project.workspace.lastCommit,
-          dirtyFiles: serializeJson(project.workspace.dirtyFiles),
-          files: serializeJson(project.workspace.files),
+      if (syncedProject.agents.length > 0) {
+        tx.insert(agentsTable)
+          .values(
+            syncedProject.agents.map((agent) => ({
+              id: agent.id,
+              projectId: syncedProject.id,
+              name: agent.name,
+              role: agent.role,
+              policyRole: agent.policyRole,
+              model: agent.model,
+              status: agent.status,
+              enabled: agent.enabled,
+              instructionsSummary: agent.instructionsSummary,
+              instructions: agent.instructions,
+              permissions: serializeJson(agent.permissions),
+              boundaries: serializeJson(agent.boundaries),
+              escalationRules: serializeJson(agent.escalationRules),
+              wipLimit: agent.wipLimit ?? null,
+              canWriteWorkspace: agent.canWriteWorkspace,
+              currentTaskId: agent.currentTaskId ?? null,
+              isSystem: true,
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            })),
+          )
+          .run();
+      }
+
+      tx.insert(projectRuntimeTable)
+        .values({
+          projectId: syncedProject.id,
+          orchestrationEnabled: syncedProject.runtime.orchestrationEnabled,
+          runnerStatus: syncedProject.runtime.runnerStatus,
+          activeWriteRunId: syncedProject.runtime.activeWriteRunId ?? null,
+          lastTickAt: syncedProject.runtime.lastTickAt ?? null,
         })
-        .where(eq(workspaceStateTable.projectId, project.id))
+        .onConflictDoUpdate({
+          target: projectRuntimeTable.projectId,
+          set: {
+            orchestrationEnabled: syncedProject.runtime.orchestrationEnabled,
+            runnerStatus: syncedProject.runtime.runnerStatus,
+            activeWriteRunId: syncedProject.runtime.activeWriteRunId ?? null,
+            lastTickAt: syncedProject.runtime.lastTickAt ?? null,
+          },
+        })
         .run();
 
-      tx.update(previewStateTable)
-        .set({
-          status: project.preview.status,
-          command: project.preview.command,
-          port: project.preview.port,
-          url: project.preview.url,
-          pid: project.preview.pid ?? null,
-          logPath: project.preview.logPath ?? null,
-          lastExitCode: project.preview.lastExitCode ?? null,
-          lastRestartedAt: project.preview.lastRestartedAt ?? null,
-          recentLogs: serializeJson(project.preview.recentLogs),
+      tx.insert(workspaceStateTable)
+        .values({
+          projectId: syncedProject.id,
+          rootPath: syncedProject.workspace.rootPath,
+          repoProvider: syncedProject.workspace.repoProvider,
+          branch: syncedProject.workspace.branch,
+          lastCommit: syncedProject.workspace.lastCommit,
+          dirtyFiles: serializeJson(syncedProject.workspace.dirtyFiles),
+          files: serializeJson(syncedProject.workspace.files),
         })
-        .where(eq(previewStateTable.projectId, project.id))
+        .onConflictDoUpdate({
+          target: workspaceStateTable.projectId,
+          set: {
+            rootPath: syncedProject.workspace.rootPath,
+            repoProvider: syncedProject.workspace.repoProvider,
+            branch: syncedProject.workspace.branch,
+            lastCommit: syncedProject.workspace.lastCommit,
+            dirtyFiles: serializeJson(syncedProject.workspace.dirtyFiles),
+            files: serializeJson(syncedProject.workspace.files),
+          },
+        })
         .run();
+
+      tx.insert(previewStateTable)
+        .values({
+          projectId: syncedProject.id,
+          status: syncedProject.preview.status,
+          command: syncedProject.preview.command,
+          port: syncedProject.preview.port,
+          url: syncedProject.preview.url,
+          pid: syncedProject.preview.pid ?? null,
+          logPath: syncedProject.preview.logPath ?? null,
+          lastExitCode: syncedProject.preview.lastExitCode ?? null,
+          lastRestartedAt: syncedProject.preview.lastRestartedAt ?? null,
+          recentLogs: serializeJson(syncedProject.preview.recentLogs),
+        })
+        .onConflictDoUpdate({
+          target: previewStateTable.projectId,
+          set: {
+            status: syncedProject.preview.status,
+            command: syncedProject.preview.command,
+            port: syncedProject.preview.port,
+            url: syncedProject.preview.url,
+            pid: syncedProject.preview.pid ?? null,
+            logPath: syncedProject.preview.logPath ?? null,
+            lastExitCode: syncedProject.preview.lastExitCode ?? null,
+            lastRestartedAt: syncedProject.preview.lastRestartedAt ?? null,
+            recentLogs: serializeJson(syncedProject.preview.recentLogs),
+          },
+        })
+        .run();
+
+      if (syncedProject.events.length > 0) {
+        tx.insert(eventsTable)
+          .values(
+            syncedProject.events.map((event) => ({
+              id: event.id,
+              projectId: syncedProject.id,
+              type: event.type,
+              summary: event.summary,
+              reason: event.reason,
+              payload: serializeJson(event.payload ?? {}),
+              createdAt: event.createdAt,
+            })),
+          )
+          .run();
+      }
+
+      if (syncedProject.agentRuns.length > 0) {
+        tx.insert(agentRunsTable)
+          .values(
+            syncedProject.agentRuns.map((run) => ({
+              id: run.id,
+              projectId: syncedProject.id,
+              agentId: run.agentId,
+              taskId: run.taskId ?? null,
+              status: run.status,
+              trigger: run.trigger,
+              summary: run.summary,
+              reason: run.reason,
+              inputSummary: run.inputSummary ?? null,
+              outputSummary: run.outputSummary ?? null,
+              errorMessage: run.errorMessage ?? null,
+              changedFiles: serializeJson(run.changedFiles),
+              artifacts: serializeJson(run.artifacts),
+              branch: run.branch ?? null,
+              leaseOwner: run.leaseOwner ?? null,
+              leaseExpiresAt: run.leaseExpiresAt ?? null,
+              createdAt: run.createdAt,
+              startedAt: run.startedAt ?? run.createdAt,
+              endedAt: run.endedAt ?? null,
+            })),
+          )
+          .run();
+      }
     });
   }
 
@@ -1229,9 +2284,14 @@ export class SQLiteProjectRepository implements ProjectRepository {
       this.database.db
         .select({ slug: projectsTable.slug })
         .from(projectsTable)
-        .where(inArray(projectsTable.slug, Array.from({ length: 50 }, (_, index) =>
-          index === 0 ? baseSlug : `${baseSlug}-${index + 1}`,
-        )))
+        .where(
+          inArray(
+            projectsTable.slug,
+            Array.from({ length: 50 }, (_, index) =>
+              index === 0 ? baseSlug : `${baseSlug}-${index + 1}`,
+            ),
+          ),
+        )
         .all()
         .map((row) => row.slug),
     );

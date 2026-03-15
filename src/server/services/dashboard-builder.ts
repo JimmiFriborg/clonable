@@ -1,6 +1,6 @@
 import {
-  priorityOrder,
-  taskStatusOrder,
+  taskPriorityOrder,
+  taskStateOrder,
   type ProgressSlice,
   type ProjectDashboardModel,
   type ProjectListItem,
@@ -9,7 +9,14 @@ import {
 } from "@/server/domain/project";
 
 function isDone(task: TaskRecord) {
-  return task.status === "Done";
+  return task.state === "Done";
+}
+
+function dependenciesSatisfied(task: TaskRecord, project: ProjectRecord) {
+  const byId = new Map(project.tasks.map((candidate) => [candidate.id, candidate]));
+  return task.dependencies
+    .filter((dependencyId) => !task.optionalDependencies.includes(dependencyId))
+    .every((dependencyId) => byId.get(dependencyId)?.state === "Done");
 }
 
 function buildProgressSlices(
@@ -45,20 +52,19 @@ function buildProgressSlices(
   });
 }
 
-function dependenciesSatisfied(task: TaskRecord, project: ProjectRecord) {
-  const byId = new Map(project.tasks.map((candidate) => [candidate.id, candidate]));
-  return task.dependencies.every((dependencyId) => byId.get(dependencyId)?.status === "Done");
+function taskStateRank(state: TaskRecord["state"]) {
+  return ["Ready", "In_Progress", "QA_Review", "Backlog", "Waiting", "Blocked", "Split_Pending", "Done"].indexOf(
+    state,
+  );
 }
 
 function sortTasksForRecommendation(project: ProjectRecord, left: TaskRecord, right: TaskRecord) {
-  const statusRank = (status: TaskRecord["status"]) =>
-    ["Ready", "In Progress", "Planned", "Inbox", "Review", "Blocked", "Done"].indexOf(status);
-  const priorityRank = (priority: TaskRecord["priority"]) => priorityOrder.indexOf(priority);
+  const priorityRank = (priority: TaskRecord["priority"]) => taskPriorityOrder.indexOf(priority);
   const dependencyUnlockCount = (task: TaskRecord) =>
     project.tasks.filter((candidate) => candidate.dependencies.includes(task.id)).length;
 
   return (
-    statusRank(left.status) - statusRank(right.status) ||
+    taskStateRank(left.state) - taskStateRank(right.state) ||
     priorityRank(left.priority) - priorityRank(right.priority) ||
     dependencyUnlockCount(right) - dependencyUnlockCount(left) ||
     left.title.localeCompare(right.title)
@@ -75,7 +81,7 @@ export function buildProjectListItem(project: ProjectRecord): ProjectListItem {
     summary: project.summary,
     status: project.status,
     progressPercent: totalTasks === 0 ? 0 : Math.round((doneTasks / totalTasks) * 100),
-    blockedTasks: project.tasks.filter((task) => task.status === "Blocked").length,
+    blockedTasks: project.tasks.filter((task) => task.state === "Blocked").length,
     currentFocus: project.currentFocus,
     plannerState: project.plannerState,
   };
@@ -91,21 +97,21 @@ export function buildProjectDashboardModel(project: ProjectRecord): ProjectDashb
   const nextTasks = project.tasks
     .filter(
       (task) =>
-        ["Ready", "In Progress", "Planned"].includes(task.status) &&
-        task.blockers.length === 0 &&
+        ["Ready", "In_Progress", "Backlog"].includes(task.state) &&
+        !task.blockerReason &&
         dependenciesSatisfied(task, project),
     )
     .sort((left, right) => sortTasksForRecommendation(project, left, right))
     .slice(0, 3);
 
-  const blockers = project.tasks.filter((task) => task.status === "Blocked");
+  const blockers = project.tasks.filter((task) => task.state === "Blocked");
   const recentCompletedTasks = [...project.tasks]
     .filter((task) => task.completedAt)
     .sort((left, right) => (right.completedAt ?? "").localeCompare(left.completedAt ?? ""))
     .slice(0, 4);
 
   const activeAgents = project.agents.filter(
-    (agent) => agent.status === "active" || agent.status === "ready",
+    (agent) => agent.enabled && (agent.status === "active" || agent.status === "ready"),
   );
 
   return {
@@ -117,10 +123,10 @@ export function buildProjectDashboardModel(project: ProjectRecord): ProjectDashb
     activeAgents,
     phaseProgress,
     featureProgress,
-    taskColumns: taskStatusOrder.map((status) => ({
-      status,
+    taskColumns: taskStateOrder.map((state) => ({
+      state,
       tasks: project.tasks
-        .filter((task) => task.status === status)
+        .filter((task) => task.state === state)
         .sort((left, right) => sortTasksForRecommendation(project, left, right)),
     })),
     counts: {

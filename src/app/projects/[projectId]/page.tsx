@@ -163,7 +163,7 @@ export default async function ProjectDashboardPage({
                 className="rounded-[24px] border border-slate-200 bg-slate-950/[0.03] p-4"
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <TaskStatusBadge status={task.status} />
+                  <TaskStatusBadge status={task.state} />
                   <PriorityBadge priority={task.priority} />
                 </div>
                 <h3 className="mt-3 font-display text-xl font-semibold tracking-tight text-slate-950">
@@ -237,7 +237,7 @@ export default async function ProjectDashboardPage({
                 <div key={task.id} className="rounded-[24px] border border-emerald-200 bg-emerald-50 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <h3 className="font-medium text-emerald-950">{task.title}</h3>
-                    <TaskStatusBadge status={task.status} />
+                    <TaskStatusBadge status={task.state} />
                   </div>
                   <p className="mt-2 text-sm text-emerald-800/80">{task.completedAt}</p>
                 </div>
@@ -261,10 +261,10 @@ export default async function ProjectDashboardPage({
                 <div key={task.id} className="rounded-[24px] border border-rose-200 bg-rose-50 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <h3 className="font-medium text-rose-950">{task.title}</h3>
-                    <TaskStatusBadge status={task.status} />
+                    <TaskStatusBadge status={task.state} />
                   </div>
                   <p className="mt-2 text-sm leading-6 text-rose-900/80">
-                    {task.blockers[0]}
+                    {task.blockerReason ?? "Orchestrator action required."}
                   </p>
                 </div>
               ))}

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
@@ -7,7 +8,7 @@ import {
   PriorityBadge,
   TaskStatusBadge,
 } from "@/features/projects/components/status-badge";
-import { priorityOrder } from "@/server/domain/project";
+import { taskPriorityOrder } from "@/server/domain/project";
 import { getProjectDashboard } from "@/server/services/project-service";
 
 export default async function TasksPage({
@@ -32,16 +33,16 @@ export default async function TasksPage({
     <div className="space-y-6">
       <PageIntro
         eyebrow="Tasks"
-        title="Actionable work with acceptance criteria"
-        description="Tasks are the execution unit. They carry dependencies, blockers, related files, artifacts, and history so agents do useful work without becoming opaque."
+        title="Actionable work with visible policy state"
+        description="Tasks are the execution unit. They carry ownership, dependencies, change logs, rejection logs, related files, and artifacts so agent flow stays understandable."
       />
 
       <Card>
         <div className="max-w-2xl space-y-2">
           <CardTitle>Add a task</CardTitle>
           <CardDescription>
-            Tasks should be small enough to finish, review, and trace back to a feature
-            without requiring the user to decode hidden agent reasoning.
+            New tasks begin in Backlog and pick up ownership through the policy flow so work
+            does not quietly skip routing.
           </CardDescription>
         </div>
 
@@ -71,10 +72,10 @@ export default async function TasksPage({
             <span className="text-sm font-semibold text-slate-900">Priority</span>
             <select
               name="priority"
-              defaultValue="P1"
+              defaultValue="normal"
               className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600"
             >
-              {priorityOrder.map((priority) => (
+              {taskPriorityOrder.map((priority) => (
                 <option key={priority} value={priority}>
                   {priority}
                 </option>
@@ -87,7 +88,7 @@ export default async function TasksPage({
             <input
               name="title"
               required
-              placeholder="Persist project intake to SQLite"
+              placeholder="Route intake-created tasks through policy ownership"
               className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600"
             />
           </label>
@@ -114,7 +115,7 @@ export default async function TasksPage({
               name="description"
               required
               rows={4}
-              placeholder="Implement a repository-backed create-project flow so new projects survive restart and can be resumed cleanly."
+              placeholder="Implement a policy-safe task detail experience with ownership, transitions, and clear rejection reasons."
               className="rounded-[24px] border border-slate-200 bg-white px-4 py-4 text-sm leading-6 text-slate-900 outline-none transition focus:border-teal-600"
             />
           </label>
@@ -125,12 +126,25 @@ export default async function TasksPage({
               name="acceptanceCriteria"
               required
               rows={5}
-              placeholder={"One line per criterion\nProject persists after restart\nTask is visible in the dashboard\nLogs show why the task was created"}
+              placeholder={"One line per criterion\nTask state is visible\nOwner is visible\nPolicy rejections are inspectable"}
               className="rounded-[24px] border border-slate-200 bg-white px-4 py-4 text-sm leading-6 text-slate-900 outline-none transition focus:border-teal-600"
             />
           </label>
 
-          <div className="lg:col-span-2 flex justify-end">
+          <label className="flex items-center gap-3 lg:col-span-2">
+            <input type="hidden" name="requiresUser" value="false" />
+            <input
+              type="checkbox"
+              name="requiresUser"
+              value="true"
+              className="h-4 w-4 rounded border-slate-300 text-teal-700 focus:ring-teal-600"
+            />
+            <span className="text-sm text-slate-700">
+              This task may require user input or approval.
+            </span>
+          </label>
+
+          <div className="flex justify-end lg:col-span-2">
             <button
               type="submit"
               disabled={dashboard.project.features.length === 0}
@@ -146,8 +160,8 @@ export default async function TasksPage({
         <Card>
           <CardTitle>No tasks yet</CardTitle>
           <CardDescription className="mt-3">
-            Once features are defined, tasks become the unit of execution and the source of
-            the “what matters now” view.
+            Once features are defined, tasks become the source of the &quot;what matters now&quot;
+            view and the policy-controlled execution flow.
           </CardDescription>
         </Card>
       ) : null}
@@ -158,7 +172,7 @@ export default async function TasksPage({
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <TaskStatusBadge status={task.status} />
+                  <TaskStatusBadge status={task.state} />
                   <PriorityBadge priority={task.priority} />
                   <span className="rounded-full bg-slate-950 px-3 py-1 text-xs font-semibold text-white">
                     {task.id}
@@ -172,16 +186,16 @@ export default async function TasksPage({
 
               <div className="grid gap-3 sm:grid-cols-3 xl:min-w-[420px]">
                 <div className="rounded-[22px] border border-slate-200 bg-slate-950/[0.03] p-4 text-sm text-slate-700">
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Owner</p>
+                  <p className="mt-2 font-medium">{task.ownerAgentId ?? "Unassigned"}</p>
+                </div>
+                <div className="rounded-[22px] border border-slate-200 bg-slate-950/[0.03] p-4 text-sm text-slate-700">
                   <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Dependencies</p>
                   <p className="mt-2 font-medium">{task.dependencies.length || "None"}</p>
                 </div>
                 <div className="rounded-[22px] border border-slate-200 bg-slate-950/[0.03] p-4 text-sm text-slate-700">
-                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Artifacts</p>
-                  <p className="mt-2 font-medium">{task.artifacts.length || "None"}</p>
-                </div>
-                <div className="rounded-[22px] border border-slate-200 bg-slate-950/[0.03] p-4 text-sm text-slate-700">
-                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Assignee</p>
-                  <p className="mt-2 font-medium">{task.assigneeAgentId ?? "Unassigned"}</p>
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Rejections</p>
+                  <p className="mt-2 font-medium">{task.rejectionLog.length || "None"}</p>
                 </div>
               </div>
             </div>
@@ -206,38 +220,35 @@ export default async function TasksPage({
               <div className="space-y-5">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-700">
-                    Related files
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {task.relatedFiles.map((file) => (
-                      <span
-                        key={file}
-                        className="rounded-full bg-slate-950 px-3 py-1 text-xs font-semibold text-white"
-                      >
-                        {file}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-700">
-                    Latest history
+                    Latest change log
                   </p>
                   <div className="mt-3 space-y-3">
-                    {task.history.slice(-2).map((entry) => (
+                    {task.changeLog.slice(-2).map((entry) => (
                       <div
-                        key={`${task.id}-${entry.at}`}
+                        key={`${task.id}-${entry.timestamp}-${entry.field}`}
                         className="rounded-[22px] border border-slate-200 bg-slate-950/[0.03] px-4 py-3 text-sm text-slate-700"
                       >
-                        <p className="font-medium text-slate-900">{entry.summary}</p>
-                        <p className="mt-1">{entry.reason}</p>
+                        <p className="font-medium text-slate-900">{entry.field}</p>
+                        <p className="mt-1">
+                          {entry.from ?? "empty"}
+                          {" -> "}
+                          {entry.to ?? "empty"}
+                        </p>
                         <p className="mt-2 text-xs uppercase tracking-[0.24em] text-slate-500">
-                          {entry.at}
+                          {entry.timestamp}
                         </p>
                       </div>
                     ))}
                   </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <Link
+                    href={`/projects/${projectId}/tasks/${task.id}`}
+                    className="inline-flex rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
+                  >
+                    Open task detail
+                  </Link>
                 </div>
               </div>
             </div>

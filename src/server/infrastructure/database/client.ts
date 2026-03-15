@@ -30,6 +30,13 @@ function hasTable(sqlite: Database.Database, tableName: string) {
   );
 }
 
+function hasColumn(sqlite: Database.Database, tableName: string, columnName: string) {
+  const rows = sqlite.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+    name: string;
+  }>;
+  return rows.some((row) => row.name === columnName);
+}
+
 function ensureMigrations(
   sqlite: Database.Database,
   db: AppDatabase,
@@ -42,7 +49,11 @@ function ensureMigrations(
     return;
   }
 
-  if (!hasTable(sqlite, "__drizzle_migrations") && hasTable(sqlite, "projects")) {
+  if (
+    !hasTable(sqlite, "__drizzle_migrations") &&
+    hasTable(sqlite, "projects") &&
+    hasColumn(sqlite, "projects", "definition_of_done")
+  ) {
     return;
   }
 

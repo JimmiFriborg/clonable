@@ -77,6 +77,23 @@ export default async function GoalPage({
         </Card>
       </section>
 
+      <Card>
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-700">
+          Definition of done
+        </p>
+        <CardTitle className="mt-3">What must be true before this MVP counts as done</CardTitle>
+        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {project.definitionOfDone.map((item) => (
+            <div
+              key={item}
+              className="rounded-[24px] border border-slate-200 bg-slate-950/[0.03] p-4 text-sm text-slate-700"
+            >
+              {item}
+            </div>
+          ))}
+        </div>
+      </Card>
+
       {project.plannerState === "failed" ? (
         <Card className="border-rose-200 bg-rose-50">
           <CardTitle className="text-rose-950">Planner fallback active</CardTitle>
@@ -169,6 +186,16 @@ export default async function GoalPage({
               />
             </label>
           </div>
+
+          <label className="grid gap-2">
+            <span className="text-sm font-semibold text-slate-900">Definition of done</span>
+            <textarea
+              name="definitionOfDone"
+              rows={5}
+              defaultValue={project.definitionOfDone.join("\n")}
+              className="rounded-[24px] border border-slate-200 bg-white px-4 py-4 text-sm leading-6 text-slate-900 outline-none transition focus:border-teal-600"
+            />
+          </label>
 
           <div className="flex justify-end">
             <button

@@ -79,7 +79,7 @@ describe("SQLiteProjectRepository", () => {
       phaseId: withPhase?.phases[0].id ?? "",
       title: "Manual planning controls",
       summary: "Let the user add and adjust plan structure without regenerating everything.",
-      priority: "P1",
+      priority: "normal",
     });
     expect(withFeature?.features).toHaveLength(1);
     expect(withFeature?.currentFocus).toContain("task");
@@ -88,25 +88,55 @@ describe("SQLiteProjectRepository", () => {
       featureId: withFeature?.features[0].id ?? "",
       title: "Add a task form",
       description: "Create the first manual task input flow.",
-      priority: "P1",
+      priority: "normal",
       acceptanceCriteria: ["User can create a task"],
       dependencies: [],
     });
     expect(withTask?.tasks).toHaveLength(1);
-    expect(withTask?.tasks[0]?.status).toBe("Ready");
+    expect(withTask?.tasks[0]?.state).toBe("Backlog");
 
-    const completed = await temp.repository.updateTaskStatus(
+    const managerId = withTask?.agents.find((agent) => agent.policyRole === "orchestrator")?.id ?? "";
+    const builderId = withTask?.agents.find((agent) => agent.policyRole === "builder")?.id ?? "";
+    const reviewerId = withTask?.agents.find((agent) => agent.policyRole === "tester")?.id ?? "";
+
+    const assigned = await temp.repository.assignTaskOwner(
       project.id,
       withTask?.tasks[0]?.id ?? "",
       {
-        status: "Done",
+        ownerAgentId: builderId,
+        agentId: managerId,
       },
     );
 
-    expect(completed?.tasks[0]?.completedAt).toBeTruthy();
-    expect(completed?.tasks[0]?.history.at(-1)?.summary).toBe("Status set to Done");
-    expect(completed?.features[0]?.status).toBe("Done");
-    expect(completed?.phases[0]?.status).toBe("Done");
-    expect(completed?.status).toBe("Review");
+    const ready = await temp.repository.transitionTask(project.id, withTask?.tasks[0]?.id ?? "", {
+      state: "Ready",
+      agentId: managerId,
+    });
+
+    const inProgress = await temp.repository.transitionTask(project.id, withTask?.tasks[0]?.id ?? "", {
+      state: "In_Progress",
+      agentId: builderId,
+      note: "Implementation started.",
+    });
+
+    const inQa = await temp.repository.transitionTask(project.id, withTask?.tasks[0]?.id ?? "", {
+      state: "QA_Review",
+      agentId: builderId,
+    });
+
+    const reviewDone = await temp.repository.transitionTask(project.id, withTask?.tasks[0]?.id ?? "", {
+      state: "Done",
+      agentId: reviewerId,
+    });
+
+    expect(assigned?.tasks[0]?.ownerAgentId).toBe(builderId);
+    expect(ready?.tasks[0]?.state).toBe("Ready");
+    expect(inProgress?.tasks[0]?.state).toBe("In_Progress");
+    expect(inQa?.tasks[0]?.state).toBe("QA_Review");
+    expect(reviewDone?.tasks[0]?.completedAt).toBeTruthy();
+    expect(reviewDone?.tasks[0]?.changeLog.at(-1)?.to).toBe("Done");
+    expect(reviewDone?.features[0]?.status).toBe("Done");
+    expect(reviewDone?.phases[0]?.status).toBe("Done");
+    expect(reviewDone?.status).toBe("Review");
   });
 });

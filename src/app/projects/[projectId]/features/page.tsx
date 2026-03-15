@@ -5,7 +5,7 @@ import { ProgressBar } from "@/components/ui/progress-bar";
 import { createProjectFeatureAction } from "@/features/projects/actions";
 import { PageIntro } from "@/features/projects/components/page-intro";
 import { PriorityBadge } from "@/features/projects/components/status-badge";
-import { priorityOrder } from "@/server/domain/project";
+import { taskPriorityOrder } from "@/server/domain/project";
 import { getProjectDashboard } from "@/server/services/project-service";
 
 export default async function FeaturesPage({
@@ -70,9 +70,9 @@ export default async function FeaturesPage({
             <select
               name="priority"
               className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600"
-              defaultValue="P1"
+              defaultValue="normal"
             >
-              {priorityOrder.map((priority) => (
+              {taskPriorityOrder.map((priority) => (
                 <option key={priority} value={priority}>
                   {priority}
                 </option>
