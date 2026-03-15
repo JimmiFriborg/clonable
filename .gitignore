@@ -13,6 +13,7 @@ pnpm-debug.log*
 *.db
 data/
 projects/
+.tmp/
 .env
 .env.local
 .env.development.local
