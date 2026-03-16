@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { transitionTaskAction } from "@/features/projects/actions";
-import { PageIntro } from "@/features/projects/components/page-intro";
+import { PageIntro } from "@/components/ui/page-intro";
 import {
   PriorityBadge,
   TaskStatusBadge,

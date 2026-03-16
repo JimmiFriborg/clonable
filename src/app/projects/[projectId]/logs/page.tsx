@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
-import { PageIntro } from "@/features/projects/components/page-intro";
+import { PageIntro } from "@/components/ui/page-intro";
 import { getProjectDashboard } from "@/server/services/project-service";
 
 export default async function LogsPage({

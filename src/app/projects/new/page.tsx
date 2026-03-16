@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
-import { PageIntro } from "@/features/projects/components/page-intro";
+import { PageIntro } from "@/components/ui/page-intro";
 import { createProjectAction } from "@/features/projects/actions";
 
 export default function NewProjectPage() {

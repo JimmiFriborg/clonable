@@ -1,6 +1,6 @@
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { AppwriteAuthPanel } from "@/features/settings/components/appwrite-auth-panel";
-import { PageIntro } from "@/features/projects/components/page-intro";
+import { PageIntro } from "@/components/ui/page-intro";
 import { getProjectProviderConfig } from "@/server/services/project-service";
 import { getOpenClawCatalog } from "@/server/services/openclaw-service";
 import { appwriteAuthGateway } from "@/server/infrastructure/appwrite/auth-gateway";

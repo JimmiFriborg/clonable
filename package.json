@@ -13,6 +13,7 @@
     "db:seed-demo": "tsx src/scripts/seed-demo.ts",
     "appwrite:bootstrap": "tsx src/scripts/bootstrap-appwrite.ts",
     "appwrite:push-sqlite": "tsx src/scripts/push-sqlite-metadata-to-appwrite.ts",
+    "appwrite:deploy-site": "tsx src/scripts/deploy-appwrite-site.ts",
     "appwrite:import-supabase": "tsx src/scripts/import-supabase-export-to-appwrite.ts"
   },
   "keywords": [],

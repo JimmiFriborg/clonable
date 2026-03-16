@@ -5,7 +5,7 @@ import {
   assignTaskOwnerAction,
   transitionTaskAction,
 } from "@/features/projects/actions";
-import { PageIntro } from "@/features/projects/components/page-intro";
+import { PageIntro } from "@/components/ui/page-intro";
 import {
   AgentRoleBadge,
   PriorityBadge,

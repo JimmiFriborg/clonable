@@ -8,7 +8,7 @@ import {
   stopPreviewAction,
   updatePreviewSettingsAction,
 } from "@/features/projects/actions";
-import { PageIntro } from "@/features/projects/components/page-intro";
+import { PageIntro } from "@/components/ui/page-intro";
 import { getDeploymentSurface } from "@/server/services/deployment-service";
 import { getProjectDashboard } from "@/server/services/project-service";
 

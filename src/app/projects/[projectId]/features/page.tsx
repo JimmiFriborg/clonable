@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { createProjectFeatureAction } from "@/features/projects/actions";
-import { PageIntro } from "@/features/projects/components/page-intro";
+import { PageIntro } from "@/components/ui/page-intro";
 import { PriorityBadge } from "@/features/projects/components/status-badge";
 import { taskPriorityOrder } from "@/server/domain/project";
 import { getProjectDashboard } from "@/server/services/project-service";

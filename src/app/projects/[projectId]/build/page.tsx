@@ -20,7 +20,7 @@ import {
   sendProjectChatMessageAction,
   setProjectDefaultChatBotAction,
 } from "@/features/projects/actions";
-import { PageIntro } from "@/features/projects/components/page-intro";
+import { PageIntro } from "@/components/ui/page-intro";
 import {
   PriorityBadge,
   TaskStatusBadge,
