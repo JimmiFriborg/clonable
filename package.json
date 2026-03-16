@@ -1,0 +1,50 @@
+{
+  "name": "clonable.dev",
+  "version": "1.0.0",
+  "description": "Clonable is a local-first hybrid AI product builder focused on helping a user turn an idea into a credible MVP, ship it in a real Git workspace, and continue building with visible, structured progress.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:seed-demo": "tsx src/scripts/seed-demo.ts",
+    "appwrite:push-sqlite": "tsx src/scripts/push-sqlite-metadata-to-appwrite.ts",
+    "appwrite:import-supabase": "tsx src/scripts/import-supabase-export-to-appwrite.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "clsx": "^2.1.1",
+    "drizzle-orm": "^0.45.1",
+    "lucide-react": "^0.577.0",
+    "next": "^16.1.6",
+    "node-appwrite": "^20.3.0",
+    "openai": "^6.29.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tailwind-merge": "^3.5.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
+    "@tailwindcss/postcss": "^4.2.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.4.27",
+    "drizzle-kit": "^0.31.9",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.1.6",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  }
+}
