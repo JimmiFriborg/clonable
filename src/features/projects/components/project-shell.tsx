@@ -22,14 +22,15 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 const navItems = [
-  { label: "Dashboard", href: "", icon: LayoutDashboard },
+  { label: "Build", href: "/build", icon: Sparkles },
+  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Goal & MVP", href: "/goal", icon: Flag },
   { label: "Phases", href: "/phases", icon: BriefcaseBusiness },
   { label: "Features", href: "/features", icon: Blocks },
   { label: "Tasks", href: "/tasks", icon: FolderTree },
   { label: "Kanban", href: "/kanban", icon: KanbanSquare },
   { label: "Agents", href: "/agents", icon: Bot },
-  { label: "Workspace", href: "/workspace", icon: Sparkles },
+  { label: "Workspace", href: "/workspace", icon: BriefcaseBusiness },
   { label: "Preview", href: "/preview", icon: PlayCircle },
   { label: "Logs", href: "/logs", icon: Logs },
 ] as const;
@@ -76,10 +77,7 @@ export function ProjectShell({
           <div className="mt-6 space-y-2">
             {navItems.map((item) => {
               const href = `/projects/${projectId}${item.href}`;
-              const active =
-                item.href === ""
-                  ? pathname === href
-                  : pathname === href || pathname.startsWith(`${href}/`);
+              const active = pathname === href || pathname.startsWith(`${href}/`);
               const Icon = item.icon;
 
               return (

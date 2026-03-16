@@ -22,6 +22,13 @@
       "when": 1773600000000,
       "tag": "0002_agent_policy_runtime",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1773705600000,
+      "tag": "0003_openclaw_build_loop",
+      "breakpoints": true
     }
   ]
 }

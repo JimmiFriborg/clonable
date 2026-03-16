@@ -73,7 +73,11 @@ function ensureMigrations(
   if (
     !hasTable(sqlite, "__drizzle_migrations") &&
     hasTable(sqlite, "projects") &&
-    hasColumn(sqlite, "projects", "definition_of_done")
+    hasColumn(sqlite, "projects", "definition_of_done") &&
+    hasColumn(sqlite, "projects", "default_chat_bot_id") &&
+    hasColumn(sqlite, "agents", "runtime_backend") &&
+    hasTable(sqlite, "project_chat_sessions") &&
+    hasTable(sqlite, "project_chat_messages")
   ) {
     return;
   }

@@ -159,6 +159,7 @@ export async function syncProjectMetadataToAppwrite(project: ProjectRecord) {
       ideaPrompt: project.ideaPrompt,
       stackPreferences: project.stackPreferences,
       constraints: project.constraints,
+      defaultChatBotId: project.defaultChatBotId,
       definitionOfDone: project.definitionOfDone,
     }),
   });

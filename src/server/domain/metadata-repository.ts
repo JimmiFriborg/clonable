@@ -15,6 +15,10 @@ import type {
   TaskOwnerInput,
   TaskTransitionInput,
 } from "@/server/domain/project";
+import type {
+  ProjectChatMessage,
+  ProjectChatSession,
+} from "@/server/domain/openclaw";
 
 export interface MetadataRepository {
   listProjects(): Promise<ProjectListItem[]>;
@@ -63,6 +67,27 @@ export interface MetadataRepository {
     agentId: string,
     input: AgentUpdateInput,
   ): Promise<ProjectRecord | undefined>;
+  updateProjectDefaultChatBot(
+    projectId: string,
+    defaultChatBotId: string,
+  ): Promise<ProjectRecord | undefined>;
+  listProjectChatSessions(projectId: string): Promise<ProjectChatSession[]>;
+  getProjectChatSession(
+    projectId: string,
+    sessionId: string,
+  ): Promise<ProjectChatSession | undefined>;
+  createProjectChatSession(
+    projectId: string,
+    session: ProjectChatSession,
+  ): Promise<ProjectChatSession | undefined>;
+  listProjectChatMessages(
+    projectId: string,
+    sessionId: string,
+  ): Promise<ProjectChatMessage[]>;
+  createProjectChatMessage(
+    projectId: string,
+    message: ProjectChatMessage,
+  ): Promise<ProjectChatMessage | undefined>;
   addAgentRun(projectId: string, run: AgentRunRecord): Promise<ProjectRecord | undefined>;
   updateAgentRun(
     projectId: string,

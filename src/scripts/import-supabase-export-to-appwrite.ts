@@ -117,28 +117,45 @@ function buildPreviewState(): PreviewRecord {
 }
 
 function mapAgents(projectId: string, roles: Array<Record<string, unknown>>): AgentRecord[] {
-  const imported = roles.map((role, index) => ({
-    id: asString(role.id, `imported-agent-${index}`),
-    name: asString(role.name, `Imported Agent ${index + 1}`),
-    role: asString(role.description, "Imported from ai-project-navigator."),
-    policyRole: (
+  const imported = roles.map((role, index) => {
+    const policyRole = (
       role.name === "Orchestrator"
         ? "orchestrator"
         : role.name === "Tester" || role.name === "Reviewer"
           ? "tester"
           : "builder"
-    ) as AgentPolicyRole,
-    model: asString(role.ai_model, asString(role.model, "GPT-5.4")),
-    status: "ready" as const,
-    enabled: true,
-    instructionsSummary: asString(role.description, "Imported agent"),
-    instructions: asString(role.system_prompt, "Imported from ai-project-navigator export."),
-    permissions: [],
-    boundaries: ["imported from navigator"],
-    escalationRules: [],
-    wipLimit: undefined,
-    canWriteWorkspace: role.name === "Builder",
-  }));
+    ) as AgentPolicyRole;
+
+    return {
+      id: asString(role.id, `imported-agent-${index}`),
+      name: asString(role.name, `Imported Agent ${index + 1}`),
+      role: asString(role.description, "Imported from ai-project-navigator."),
+      policyRole,
+      runtimeBackend:
+        policyRole === "orchestrator" || policyRole === "tester" ? "openclaw" : "provider",
+      provider: policyRole === "orchestrator" || policyRole === "tester" ? undefined : "openai",
+      model:
+        policyRole === "orchestrator" || policyRole === "tester"
+          ? "OpenClaw"
+          : asString(role.ai_model, asString(role.model, "GPT-5.4")),
+      fallbackProviders: [],
+      openclawBotId:
+        policyRole === "orchestrator"
+          ? "delivery-orchestrator"
+          : policyRole === "tester"
+            ? "quality-guardian"
+            : undefined,
+      status: "ready" as const,
+      enabled: true,
+      instructionsSummary: asString(role.description, "Imported agent"),
+      instructions: asString(role.system_prompt, "Imported from ai-project-navigator export."),
+      permissions: [],
+      boundaries: ["imported from navigator"],
+      escalationRules: [],
+      wipLimit: undefined,
+      canWriteWorkspace: role.name === "Builder",
+    } satisfies AgentRecord;
+  });
 
   if (imported.length > 0) {
     return imported;
@@ -265,6 +282,7 @@ function mapProjectRecord(
     ideaPrompt: asString(project.description, projectName),
     stackPreferences: ["Appwrite", "Next.js"],
     constraints: ["Imported from ai-project-navigator"],
+    defaultChatBotId: "mvp-guide",
     definitionOfDone: [
       "Imported MVP boundary is reviewed.",
       "Imported tasks use the canonical policy states.",

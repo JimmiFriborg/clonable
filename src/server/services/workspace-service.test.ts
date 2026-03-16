@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTempRepository } from "@/server/test-utils/temp-database";
 import {
   commitProjectWorkspace,
+  ensureTaskWorkspaceBranch,
   syncProjectWorkspace,
 } from "@/server/services/workspace-service";
 
@@ -75,5 +76,53 @@ describe("workspace-service", () => {
 
     expect(committed?.workspace.lastCommit).toBe("Initial workspace");
     expect(committed?.workspace.dirtyFiles).toEqual([]);
+  });
+
+  it("creates task-scoped branches when work starts", async () => {
+    const temp = createTempRepository();
+    cleanups.push(temp.cleanup);
+
+    const project = await temp.repository.createProject({
+      name: "Branch project",
+      ideaPrompt: "Create task branches.",
+      targetUser: "Founders",
+      constraints: ["Local-first"],
+      stackPreferences: ["Next.js"],
+    });
+    const workspaceRoot = path.join(temp.tempDirectory, "branch-project");
+
+    await temp.repository.updateWorkspaceState(project.id, {
+      ...project.workspace,
+      rootPath: workspaceRoot,
+    });
+
+    const withPhase = await temp.repository.createPhase(project.id, {
+      title: "Planning",
+      goal: "Set up branchable work.",
+    });
+    const withFeature = await temp.repository.createFeature(project.id, {
+      phaseId: withPhase?.phases[0]?.id ?? "",
+      title: "Task branch support",
+      summary: "Give each task its own branch.",
+      priority: "normal",
+    });
+    const withTask = await temp.repository.createTask(project.id, {
+      featureId: withFeature?.features[0]?.id ?? "",
+      title: "Prepare task branch",
+      description: "Create a task-scoped branch when work starts.",
+      priority: "normal",
+      acceptanceCriteria: ["Branch exists"],
+      dependencies: [],
+    });
+
+    await syncProjectWorkspace(project.id, {
+      repository: temp.repository,
+    });
+
+    const updated = await ensureTaskWorkspaceBranch(project.id, withTask?.tasks[0]?.id ?? "", {
+      repository: temp.repository,
+    });
+
+    expect(updated?.workspace.branch).toBe("task/prepare-task-branch");
   });
 });

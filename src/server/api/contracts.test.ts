@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  agentRuntimeRequestSchema,
   agentRunEnqueueRequestSchema,
   createProjectRequestSchema,
+  projectChatMessageRequestSchema,
   taskTransitionRequestSchema,
 } from "@/server/api/contracts";
 
@@ -37,5 +39,25 @@ describe("api contracts", () => {
     });
 
     expect(result.trigger).toBe("manual");
+  });
+
+  it("accepts agent runtime payloads for OpenClaw", () => {
+    const result = agentRuntimeRequestSchema.parse({
+      runtimeBackend: "openclaw",
+      model: "OpenClaw",
+      openclawBotId: "mvp-guide",
+    });
+
+    expect(result.runtimeBackend).toBe("openclaw");
+    expect(result.openclawBotId).toBe("mvp-guide");
+  });
+
+  it("requires content for project chat messages", () => {
+    expect(() =>
+      projectChatMessageRequestSchema.parse({
+        botId: "mvp-guide",
+        content: "",
+      }),
+    ).toThrow();
   });
 });

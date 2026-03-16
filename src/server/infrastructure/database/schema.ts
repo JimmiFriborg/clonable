@@ -14,6 +14,7 @@ export const projectsTable = sqliteTable("projects", {
   ideaPrompt: text("idea_prompt").notNull(),
   stackPreferences: text("stack_preferences").notNull(),
   constraints: text("constraints").notNull(),
+  defaultChatBotId: text("default_chat_bot_id").notNull().default("mvp-guide"),
   definitionOfDone: text("definition_of_done").notNull(),
   workspacePath: text("workspace_path").notNull(),
   repoProvider: text("repo_provider").notNull(),
@@ -113,7 +114,11 @@ export const agentsTable = sqliteTable("agents", {
   name: text("name").notNull(),
   role: text("role").notNull(),
   policyRole: text("policy_role").notNull(),
+  runtimeBackend: text("runtime_backend").notNull().default("provider"),
+  provider: text("provider"),
   model: text("model").notNull(),
+  fallbackProviders: text("fallback_providers").notNull().default("[]"),
+  openclawBotId: text("openclaw_bot_id"),
   status: text("status").notNull(),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   instructionsSummary: text("instructions_summary").notNull(),
@@ -206,6 +211,32 @@ export const previewStateTable = sqliteTable("preview_state", {
   recentLogs: text("recent_logs").notNull(),
 });
 
+export const projectChatSessionsTable = sqliteTable("project_chat_sessions", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projectsTable.id, { onDelete: "cascade" }),
+  botId: text("bot_id").notNull(),
+  title: text("title").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const projectChatMessagesTable = sqliteTable("project_chat_messages", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projectsTable.id, { onDelete: "cascade" }),
+  sessionId: text("session_id")
+    .notNull()
+    .references(() => projectChatSessionsTable.id, { onDelete: "cascade" }),
+  botId: text("bot_id").notNull(),
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  suggestions: text("suggestions").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 export const schema = {
   projectsTable,
   mvpDefinitionsTable,
@@ -218,4 +249,6 @@ export const schema = {
   projectRuntimeTable,
   workspaceStateTable,
   previewStateTable,
+  projectChatSessionsTable,
+  projectChatMessagesTable,
 };

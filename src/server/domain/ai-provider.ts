@@ -1,13 +1,17 @@
 export const aiProviderOrder = ["openai", "anthropic", "gemini"] as const;
 export type AiProvider = (typeof aiProviderOrder)[number];
+export const agentRuntimeBackendOrder = ["openclaw", "provider"] as const;
+export type AgentRuntimeBackend = (typeof agentRuntimeBackendOrder)[number];
+
+export interface AgentProviderFallback {
+  provider: AiProvider;
+  model: string;
+}
 
 export interface AgentProviderSelection {
   provider: AiProvider;
   model: string;
-  fallbackProviders: Array<{
-    provider: AiProvider;
-    model: string;
-  }>;
+  fallbackProviders: AgentProviderFallback[];
 }
 
 export interface ProviderConfigResponse {

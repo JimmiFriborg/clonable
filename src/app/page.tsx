@@ -109,8 +109,8 @@ export default async function HomePage() {
               </h2>
             </div>
             <p className="max-w-lg text-right text-sm leading-6 text-slate-600">
-              This scaffold starts with a demo project that exercises the planning model and
-              route structure before persistence and live orchestration are added.
+              Projects now open into the build loop directly, so MVP planning, OpenClaw chat,
+              task flow, and local repo progress stay in one visible surface.
             </p>
           </div>
 
@@ -130,7 +130,7 @@ export default async function HomePage() {
                           <CardDescription>{project.summary}</CardDescription>
                         </div>
                         <Link
-                          href={`/projects/${project.id}`}
+                          href={`/projects/${project.id}/build`}
                           className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
                         >
                           Open project
@@ -190,7 +190,7 @@ export default async function HomePage() {
                 <p>4. Phased implementation plan and executable app scaffold</p>
               </div>
               <Link
-                href={projects[0] ? `/projects/${projects[0].id}` : "/projects/new"}
+                href={projects[0] ? `/projects/${projects[0].id}/build` : "/projects/new"}
                 className="mt-6 inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
               >
                 {projects[0] ? "Explore the current workspace" : "Create the first workspace"}

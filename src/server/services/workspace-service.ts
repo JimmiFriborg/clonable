@@ -37,6 +37,15 @@ function normalizePath(value: string) {
   return value.replace(/\\/g, "/");
 }
 
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
 function ensureWorkspaceScaffold(project: ProjectRecord) {
   fs.mkdirSync(project.workspace.rootPath, { recursive: true });
   fs.mkdirSync(path.join(project.workspace.rootPath, ".clonable", "logs"), {
@@ -310,6 +319,66 @@ export async function commitProjectWorkspace(
       reason: commitMessage,
       payload: {
         rootPath: updatedProject.workspace.rootPath,
+      },
+    });
+  }
+
+  return updatedProject;
+}
+
+export async function ensureTaskWorkspaceBranch(
+  projectId: string,
+  taskId: string,
+  dependencies: WorkspaceServiceDependencies = {},
+) {
+  const repository = dependencies.repository ?? sqliteProjectRepository;
+  const project = await syncProjectWorkspace(projectId, { repository }, { recordEvent: false });
+
+  if (!project) {
+    return undefined;
+  }
+
+  const task = project.tasks.find((candidate) => candidate.id === taskId);
+  if (!task) {
+    return project;
+  }
+
+  const branchName = `task/${slugify(task.title) || slugify(task.id) || "work-item"}`;
+  const verifyResult = runCommand(
+    "git",
+    ["rev-parse", "--verify", branchName],
+    project.workspace.rootPath,
+  );
+  const checkoutResult = verifyResult.ok
+    ? runCommand("git", ["checkout", branchName], project.workspace.rootPath)
+    : runCommand("git", ["checkout", "-b", branchName], project.workspace.rootPath);
+
+  if (!checkoutResult.ok) {
+    await repository.recordEvent({
+      projectId,
+      type: "workspace",
+      summary: "Task branch failed",
+      reason: checkoutResult.stderr || checkoutResult.stdout || "Unable to create or switch task branch.",
+      payload: {
+        taskId,
+        branchName,
+      },
+    });
+
+    return syncProjectWorkspace(projectId, { repository }, { recordEvent: false });
+  }
+
+  const updatedProject = await syncProjectWorkspace(projectId, { repository }, { recordEvent: false });
+
+  if (updatedProject) {
+    await repository.recordEvent({
+      projectId,
+      type: "workspace",
+      summary: "Task branch ready",
+      reason: `Workspace is now on ${branchName}.`,
+      payload: {
+        taskId,
+        branchName,
       },
     });
   }

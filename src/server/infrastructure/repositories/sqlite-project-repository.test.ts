@@ -139,4 +139,50 @@ describe("SQLiteProjectRepository", () => {
     expect(reviewDone?.phases[0]?.status).toBe("Done");
     expect(reviewDone?.status).toBe("Review");
   });
+
+  it("persists agent runtime and project chat state", async () => {
+    const temp = createTempRepository();
+    cleanups.push(temp.cleanup);
+
+    const project = await temp.repository.createProject({
+      name: "Chat runtime project",
+      ideaPrompt: "Keep chat and agent runtimes visible.",
+      targetUser: "Builders",
+      constraints: ["Stay local-first"],
+      stackPreferences: ["Next.js"],
+    });
+
+    const manager = project.agents.find((agent) => agent.policyRole === "orchestrator");
+    expect(manager?.runtimeBackend).toBe("openclaw");
+
+    const updatedProject = await temp.repository.updateProjectDefaultChatBot(project.id, "quality-guardian");
+    const session = await temp.repository.createProjectChatSession(project.id, {
+      id: "session-1",
+      projectId: project.id,
+      botId: "quality-guardian",
+      title: "Quality thread",
+      createdAt: "2026-03-16T10:00:00.000Z",
+      updatedAt: "2026-03-16T10:00:00.000Z",
+    });
+    await temp.repository.createProjectChatMessage(project.id, {
+      id: "message-1",
+      projectId: project.id,
+      sessionId: "session-1",
+      botId: "quality-guardian",
+      role: "assistant",
+      content: "Review the current MVP boundary.",
+      suggestions: [],
+      createdAt: "2026-03-16T10:01:00.000Z",
+    });
+
+    expect(updatedProject?.defaultChatBotId).toBe("quality-guardian");
+    expect(session?.botId).toBe("quality-guardian");
+
+    const persisted = await temp.repository.getProject(project.id);
+    const messages = await temp.repository.listProjectChatMessages(project.id, "session-1");
+
+    expect(persisted?.defaultChatBotId).toBe("quality-guardian");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toContain("MVP boundary");
+  });
 });

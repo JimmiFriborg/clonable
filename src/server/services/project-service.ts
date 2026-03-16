@@ -17,14 +17,17 @@ import type {
   TaskTransitionInput,
 } from "@/server/domain/project";
 import type { ProviderConfigResponse } from "@/server/domain/ai-provider";
+import type { AgentRuntimeBackend, AiProvider } from "@/server/domain/ai-provider";
 import { getProviderConfigResponse } from "@/server/services/provider-gateway";
 import { sqliteProjectRepository } from "@/server/infrastructure/repositories/sqlite-project-repository";
 import { syncProjectMetadataToAppwrite } from "@/server/infrastructure/appwrite/metadata-sync";
+import { resolveOpenClawDefaultBotId } from "@/server/domain/openclaw";
 import {
   ensureOrchestrationRunner,
   runProjectOrchestrationCycle,
 } from "@/server/services/orchestration-service";
 import { generatePlannerDraft } from "@/server/services/planner-service";
+import { ensureTaskWorkspaceBranch } from "@/server/services/workspace-service";
 
 function buildFallbackMvp(input: ProjectIntakeInput): ProjectMvpUpdateInput {
   return {
@@ -50,6 +53,36 @@ async function syncProjectMetadata(project: ProjectRecord | undefined) {
   }
 
   await syncProjectMetadataToAppwrite(project);
+}
+
+function normalizeAgentInput(input: AgentCreateInput): AgentCreateInput {
+  const runtimeBackend = (input.runtimeBackend ?? "provider") as AgentRuntimeBackend;
+
+  if (runtimeBackend === "openclaw") {
+    const botId = resolveOpenClawDefaultBotId(
+      input.openclawBotId ?? process.env.OPENCLAW_DEFAULT_BOT_ID,
+    );
+
+    return {
+      ...input,
+      runtimeBackend,
+      provider: undefined,
+      model: input.model.trim() || "OpenClaw",
+      fallbackProviders: [],
+      openclawBotId: botId,
+    };
+  }
+
+  const provider = (input.provider ?? "openai") as AiProvider;
+
+  return {
+    ...input,
+    runtimeBackend: "provider",
+    provider,
+    model: input.model.trim() || "GPT-5.4",
+    fallbackProviders: input.fallbackProviders ?? [],
+    openclawBotId: undefined,
+  };
 }
 
 export async function listProjects() {
@@ -182,6 +215,7 @@ export async function createProjectFeature(projectId: string, input: FeatureCrea
     });
   }
 
+  await syncProjectMetadata(project);
   return project;
 }
 
@@ -215,7 +249,7 @@ export async function transitionProjectTask(
   taskId: string,
   input: TaskTransitionInput,
 ) {
-  const project = await sqliteProjectRepository.transitionTask(projectId, taskId, input);
+  let project = await sqliteProjectRepository.transitionTask(projectId, taskId, input);
 
   if (project) {
     await sqliteProjectRepository.recordEvent({
@@ -232,6 +266,10 @@ export async function transitionProjectTask(
 
     if (project.runtime.orchestrationEnabled) {
       await runProjectOrchestrationCycle(projectId);
+    }
+
+    if (input.state === "In_Progress") {
+      project = (await ensureTaskWorkspaceBranch(projectId, taskId)) ?? project;
     }
   }
 
@@ -269,7 +307,7 @@ export async function assignProjectTaskOwner(
 }
 
 export async function createProjectAgent(projectId: string, input: AgentCreateInput) {
-  const project = await sqliteProjectRepository.createAgent(projectId, input);
+  const project = await sqliteProjectRepository.createAgent(projectId, normalizeAgentInput(input));
 
   if (project) {
     await sqliteProjectRepository.recordEvent({
@@ -292,7 +330,11 @@ export async function updateProjectAgent(
   agentId: string,
   input: AgentUpdateInput,
 ) {
-  const project = await sqliteProjectRepository.updateAgent(projectId, agentId, input);
+  const project = await sqliteProjectRepository.updateAgent(
+    projectId,
+    agentId,
+    normalizeAgentInput(input),
+  );
 
   if (project) {
     await sqliteProjectRepository.recordEvent({
@@ -310,6 +352,27 @@ export async function updateProjectAgent(
 
   await syncProjectMetadata(project);
   return project;
+}
+
+export async function updateProjectAgentRuntime(
+  projectId: string,
+  agentId: string,
+  runtime: Pick<
+    AgentCreateInput,
+    "runtimeBackend" | "provider" | "model" | "fallbackProviders" | "openclawBotId"
+  >,
+) {
+  const project = await sqliteProjectRepository.getProject(projectId);
+  const agent = project?.agents.find((candidate) => candidate.id === agentId);
+
+  if (!project || !agent) {
+    return undefined;
+  }
+
+  return updateProjectAgent(projectId, agentId, {
+    ...agent,
+    ...runtime,
+  });
 }
 
 export async function updateProjectRuntime(projectId: string, runtime: ProjectRuntimeState) {
@@ -333,6 +396,7 @@ export async function updateProjectRuntime(projectId: string, runtime: ProjectRu
     }
   }
 
+  await syncProjectMetadata(project);
   return project;
 }
 

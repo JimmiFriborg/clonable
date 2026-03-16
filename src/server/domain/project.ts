@@ -1,3 +1,9 @@
+import type {
+  AgentProviderFallback,
+  AgentRuntimeBackend,
+  AiProvider,
+} from "@/server/domain/ai-provider";
+
 export const taskStateOrder = [
   "Backlog",
   "Ready",
@@ -150,12 +156,24 @@ export interface TaskRecord {
   completedAt?: string;
 }
 
+export interface AgentRuntimeConfig {
+  runtimeBackend: AgentRuntimeBackend;
+  provider?: AiProvider;
+  model: string;
+  fallbackProviders: AgentProviderFallback[];
+  openclawBotId?: string;
+}
+
 export interface AgentRecord {
   id: string;
   name: string;
   role: string;
   policyRole: AgentPolicyRole;
+  runtimeBackend: AgentRuntimeBackend;
+  provider?: AiProvider;
   model: string;
+  fallbackProviders: AgentProviderFallback[];
+  openclawBotId?: string;
   status: AgentStatus;
   enabled: boolean;
   instructionsSummary: string;
@@ -260,6 +278,7 @@ export interface ProjectRecord {
   ideaPrompt: string;
   stackPreferences: string[];
   constraints: string[];
+  defaultChatBotId: string;
   definitionOfDone: string[];
   mvp: MVPDefinitionRecord;
   phases: PhaseRecord[];
@@ -407,7 +426,11 @@ export interface AgentCreateInput {
   name: string;
   role: string;
   policyRole: AgentPolicyRole;
+  runtimeBackend: AgentRuntimeBackend;
+  provider?: AiProvider;
   model: string;
+  fallbackProviders: AgentProviderFallback[];
+  openclawBotId?: string;
   status: AgentStatus;
   enabled: boolean;
   instructionsSummary: string;

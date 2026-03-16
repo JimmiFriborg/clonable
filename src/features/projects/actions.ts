@@ -33,6 +33,13 @@ import {
   taskPriorityOrder,
   taskStateOrder,
 } from "@/server/domain/project";
+import { agentRuntimeBackendOrder, aiProviderOrder } from "@/server/domain/ai-provider";
+import {
+  createProjectChatSession,
+  createTaskFromChatSuggestion,
+  sendProjectChatMessage,
+  updateProjectDefaultChatBot,
+} from "@/server/services/openclaw-service";
 
 function parseLines(value: FormDataEntryValue | null) {
   return String(value ?? "")
@@ -45,9 +52,36 @@ function parseBoolean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim().toLowerCase() === "true";
 }
 
+function parseFallbackProviders(value: FormDataEntryValue | null) {
+  return parseLines(value)
+    .map((line) => {
+      const [provider, ...modelParts] = line.split(":");
+      const normalizedProvider = provider?.trim().toLowerCase();
+      const model = modelParts.join(":").trim();
+
+      if (!normalizedProvider || !model) {
+        return undefined;
+      }
+
+      if (!aiProviderOrder.includes(normalizedProvider as (typeof aiProviderOrder)[number])) {
+        return undefined;
+      }
+
+      return {
+        provider: normalizedProvider as (typeof aiProviderOrder)[number],
+        model,
+      };
+    })
+    .filter((provider): provider is { provider: (typeof aiProviderOrder)[number]; model: string } =>
+      Boolean(provider),
+    );
+}
+
 function revalidateProjectPaths(projectId: string) {
   revalidatePath("/");
   revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/build`);
+  revalidatePath(`/projects/${projectId}/dashboard`);
   revalidatePath(`/projects/${projectId}/goal`);
   revalidatePath(`/projects/${projectId}/phases`);
   revalidatePath(`/projects/${projectId}/features`);
@@ -70,7 +104,7 @@ export async function createProjectAction(formData: FormData) {
   });
 
   revalidatePath("/");
-  redirect(`/projects/${project.id}/goal`);
+  redirect(`/projects/${project.id}/build`);
 }
 
 export async function updateProjectGoalAction(projectId: string, formData: FormData) {
@@ -197,6 +231,8 @@ export async function createProjectAgentAction(
 ) {
   const policyRole = String(formData.get("policyRole") ?? "builder").trim();
   const status = String(formData.get("status") ?? "ready").trim();
+  const runtimeBackend = String(formData.get("runtimeBackend") ?? "provider").trim();
+  const provider = String(formData.get("provider") ?? "openai").trim();
   const wipLimitValue = String(formData.get("wipLimit") ?? "").trim();
 
   await createProjectAgent(projectId, {
@@ -205,7 +241,17 @@ export async function createProjectAgentAction(
     policyRole: agentPolicyRoleOrder.includes(policyRole as (typeof agentPolicyRoleOrder)[number])
       ? (policyRole as (typeof agentPolicyRoleOrder)[number])
       : "builder",
+    runtimeBackend: agentRuntimeBackendOrder.includes(
+      runtimeBackend as (typeof agentRuntimeBackendOrder)[number],
+    )
+      ? (runtimeBackend as (typeof agentRuntimeBackendOrder)[number])
+      : "provider",
+    provider: aiProviderOrder.includes(provider as (typeof aiProviderOrder)[number])
+      ? (provider as (typeof aiProviderOrder)[number])
+      : "openai",
     model: String(formData.get("model") ?? "").trim(),
+    fallbackProviders: parseFallbackProviders(formData.get("fallbackProviders")),
+    openclawBotId: String(formData.get("openclawBotId") ?? "").trim() || undefined,
     status: agentStatusOrder.includes(status as (typeof agentStatusOrder)[number])
       ? (status as (typeof agentStatusOrder)[number])
       : "ready",
@@ -231,6 +277,8 @@ export async function updateProjectAgentAction(
 ) {
   const policyRole = String(formData.get("policyRole") ?? "builder").trim();
   const status = String(formData.get("status") ?? "ready").trim();
+  const runtimeBackend = String(formData.get("runtimeBackend") ?? "provider").trim();
+  const provider = String(formData.get("provider") ?? "openai").trim();
   const wipLimitValue = String(formData.get("wipLimit") ?? "").trim();
 
   await updateProjectAgent(projectId, agentId, {
@@ -239,7 +287,17 @@ export async function updateProjectAgentAction(
     policyRole: agentPolicyRoleOrder.includes(policyRole as (typeof agentPolicyRoleOrder)[number])
       ? (policyRole as (typeof agentPolicyRoleOrder)[number])
       : "builder",
+    runtimeBackend: agentRuntimeBackendOrder.includes(
+      runtimeBackend as (typeof agentRuntimeBackendOrder)[number],
+    )
+      ? (runtimeBackend as (typeof agentRuntimeBackendOrder)[number])
+      : "provider",
+    provider: aiProviderOrder.includes(provider as (typeof aiProviderOrder)[number])
+      ? (provider as (typeof aiProviderOrder)[number])
+      : "openai",
     model: String(formData.get("model") ?? "").trim(),
+    fallbackProviders: parseFallbackProviders(formData.get("fallbackProviders")),
+    openclawBotId: String(formData.get("openclawBotId") ?? "").trim() || undefined,
     status: agentStatusOrder.includes(status as (typeof agentStatusOrder)[number])
       ? (status as (typeof agentStatusOrder)[number])
       : "ready",
@@ -333,4 +391,68 @@ export async function refreshPreviewAction(projectId: string, returnPath: string
 
   revalidateProjectPaths(projectId);
   redirect(returnPath);
+}
+
+export async function setProjectDefaultChatBotAction(
+  projectId: string,
+  returnPath: string,
+  formData: FormData,
+) {
+  const botId = String(formData.get("botId") ?? "").trim();
+
+  await updateProjectDefaultChatBot(projectId, botId);
+  revalidateProjectPaths(projectId);
+  redirect(returnPath);
+}
+
+export async function createProjectChatSessionAction(
+  projectId: string,
+  returnPath: string,
+  formData: FormData,
+) {
+  const botId = String(formData.get("botId") ?? "").trim();
+  const session = await createProjectChatSession(projectId, {
+    botId,
+    title: String(formData.get("title") ?? "").trim() || undefined,
+  });
+
+  revalidateProjectPaths(projectId);
+  const destination = session ? `${returnPath}?session=${session.id}` : returnPath;
+  redirect(destination);
+}
+
+export async function sendProjectChatMessageAction(
+  projectId: string,
+  returnPath: string,
+  formData: FormData,
+) {
+  const result = await sendProjectChatMessage(projectId, {
+    sessionId: String(formData.get("sessionId") ?? "").trim() || undefined,
+    botId: String(formData.get("botId") ?? "").trim(),
+    content: String(formData.get("content") ?? "").trim(),
+  });
+
+  revalidateProjectPaths(projectId);
+  const destination =
+    result?.sessionId ? `${returnPath}?session=${result.sessionId}` : returnPath;
+  redirect(destination);
+}
+
+export async function createTaskFromChatSuggestionAction(
+  projectId: string,
+  returnPath: string,
+  formData: FormData,
+) {
+  const sessionId = String(formData.get("sessionId") ?? "").trim();
+
+  await createTaskFromChatSuggestion(projectId, {
+    sessionId,
+    messageId: String(formData.get("messageId") ?? "").trim(),
+    suggestionId: String(formData.get("suggestionId") ?? "").trim(),
+    featureId: String(formData.get("featureId") ?? "").trim(),
+  });
+
+  revalidateProjectPaths(projectId);
+  const destination = sessionId ? `${returnPath}?session=${sessionId}` : returnPath;
+  redirect(destination);
 }

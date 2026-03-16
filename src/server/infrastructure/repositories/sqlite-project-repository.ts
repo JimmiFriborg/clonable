@@ -5,6 +5,11 @@ import { asc, eq, inArray } from "drizzle-orm";
 
 import { defaultAgentTemplates } from "@/server/domain/default-agent-templates";
 import type { ProjectRepository } from "@/server/domain/project-repository";
+import type {
+  ProjectChatMessage,
+  ProjectChatSession,
+} from "@/server/domain/openclaw";
+import { resolveOpenClawDefaultBotId } from "@/server/domain/openclaw";
 import {
   allowedTaskTransitions,
   type AgentCreateInput,
@@ -52,6 +57,8 @@ import {
   projectsTable,
   projectRuntimeTable,
   tasksTable,
+  projectChatMessagesTable,
+  projectChatSessionsTable,
   workspaceStateTable,
 } from "@/server/infrastructure/database/schema";
 
@@ -466,6 +473,7 @@ function buildDefaultProject(input: ProjectIntakeInput, slug: string): ProjectRe
   const createdAt = nowIso();
   const projectId = randomId("project");
   const workspace = buildWorkspaceState(slug);
+  const defaultChatBotId = resolveOpenClawDefaultBotId(process.env.OPENCLAW_DEFAULT_BOT_ID);
 
   return {
     id: projectId,
@@ -481,6 +489,7 @@ function buildDefaultProject(input: ProjectIntakeInput, slug: string): ProjectRe
     ideaPrompt: input.ideaPrompt,
     stackPreferences: input.stackPreferences,
     constraints: input.constraints,
+    defaultChatBotId,
     definitionOfDone: DEFAULT_DEFINITION_OF_DONE,
     mvp: {
       goalStatement: input.ideaPrompt,
@@ -1185,7 +1194,11 @@ function mapProjectRowsToRecord(
       name: agent.name,
       role: agent.role,
       policyRole: agent.policyRole as AgentPolicyRole,
+      runtimeBackend: (agent.runtimeBackend as AgentRecord["runtimeBackend"]) ?? "provider",
+      provider: agent.provider as AgentRecord["provider"],
       model: agent.model,
+      fallbackProviders: parseJson(agent.fallbackProviders, [] as AgentRecord["fallbackProviders"]),
+      openclawBotId: agent.openclawBotId ?? undefined,
       status: agent.status as AgentRecord["status"],
       enabled: agent.enabled,
       instructionsSummary: agent.instructionsSummary,
@@ -1256,6 +1269,7 @@ function mapProjectRowsToRecord(
     ideaPrompt: projectRow.ideaPrompt,
     stackPreferences: parseJson(projectRow.stackPreferences, [] as string[]),
     constraints: parseJson(projectRow.constraints, [] as string[]),
+    defaultChatBotId: resolveOpenClawDefaultBotId(projectRow.defaultChatBotId ?? undefined),
     definitionOfDone: parseJson(projectRow.definitionOfDone, DEFAULT_DEFINITION_OF_DONE),
     mvp: {
       goalStatement: mvpRow?.goalStatement ?? projectRow.ideaPrompt,
@@ -1307,6 +1321,50 @@ function mapProjectRowsToRecord(
   return syncProjectState(project);
 }
 
+function listProjectChatSessionsForProject(
+  db: AppDatabase,
+  projectId: string,
+): ProjectChatSession[] {
+  return db
+    .select()
+    .from(projectChatSessionsTable)
+    .where(eq(projectChatSessionsTable.projectId, projectId))
+    .orderBy(asc(projectChatSessionsTable.createdAt))
+    .all()
+    .map((session) => ({
+      id: session.id,
+      projectId: session.projectId,
+      botId: session.botId,
+      title: session.title,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    }));
+}
+
+function listProjectChatMessagesForSession(
+  db: AppDatabase,
+  projectId: string,
+  sessionId: string,
+): ProjectChatMessage[] {
+  return db
+    .select()
+    .from(projectChatMessagesTable)
+    .where(eq(projectChatMessagesTable.projectId, projectId))
+    .orderBy(asc(projectChatMessagesTable.createdAt))
+    .all()
+    .filter((message) => message.sessionId === sessionId)
+    .map((message) => ({
+      id: message.id,
+      projectId: message.projectId,
+      sessionId: message.sessionId,
+      botId: message.botId,
+      role: message.role as ProjectChatMessage["role"],
+      content: message.content,
+      suggestions: parseJson(message.suggestions, [] as ProjectChatMessage["suggestions"]),
+      createdAt: message.createdAt,
+    }));
+}
+
 function insertProjectGraph(db: AppDatabase, project: ProjectRecord) {
   const syncedProject = syncProjectState(project);
   const timestamp = nowIso();
@@ -1326,6 +1384,7 @@ function insertProjectGraph(db: AppDatabase, project: ProjectRecord) {
       ideaPrompt: syncedProject.ideaPrompt,
       stackPreferences: serializeJson(syncedProject.stackPreferences),
       constraints: serializeJson(syncedProject.constraints),
+      defaultChatBotId: syncedProject.defaultChatBotId,
       definitionOfDone: serializeJson(syncedProject.definitionOfDone),
       workspacePath: syncedProject.workspace.rootPath,
       repoProvider: syncedProject.workspace.repoProvider,
@@ -1433,7 +1492,11 @@ function insertProjectGraph(db: AppDatabase, project: ProjectRecord) {
           name: agent.name,
           role: agent.role,
           policyRole: agent.policyRole,
+          runtimeBackend: agent.runtimeBackend,
+          provider: agent.provider ?? null,
           model: agent.model,
+          fallbackProviders: serializeJson(agent.fallbackProviders),
+          openclawBotId: agent.openclawBotId ?? null,
           status: agent.status,
           enabled: agent.enabled,
           instructionsSummary: agent.instructionsSummary,
@@ -1897,6 +1960,87 @@ export class SQLiteProjectRepository implements ProjectRepository {
     });
   }
 
+  async updateProjectDefaultChatBot(projectId: string, defaultChatBotId: string) {
+    const project = await this.getProject(projectId);
+
+    if (!project) {
+      return undefined;
+    }
+
+    return this.saveProject({
+      ...project,
+      defaultChatBotId: resolveOpenClawDefaultBotId(defaultChatBotId),
+    });
+  }
+
+  async listProjectChatSessions(projectId: string) {
+    return listProjectChatSessionsForProject(this.database.db, projectId);
+  }
+
+  async getProjectChatSession(projectId: string, sessionId: string) {
+    return listProjectChatSessionsForProject(this.database.db, projectId).find(
+      (session) => session.id === sessionId,
+    );
+  }
+
+  async createProjectChatSession(projectId: string, session: ProjectChatSession) {
+    const project = await this.getProject(projectId);
+
+    if (!project) {
+      return undefined;
+    }
+
+    this.database.db
+      .insert(projectChatSessionsTable)
+      .values({
+        id: session.id,
+        projectId,
+        botId: session.botId,
+        title: session.title,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+      })
+      .run();
+
+    return session;
+  }
+
+  async listProjectChatMessages(projectId: string, sessionId: string) {
+    return listProjectChatMessagesForSession(this.database.db, projectId, sessionId);
+  }
+
+  async createProjectChatMessage(projectId: string, message: ProjectChatMessage) {
+    const session = await this.getProjectChatSession(projectId, message.sessionId);
+
+    if (!session) {
+      return undefined;
+    }
+
+    this.database.db
+      .insert(projectChatMessagesTable)
+      .values({
+        id: message.id,
+        projectId,
+        sessionId: message.sessionId,
+        botId: message.botId,
+        role: message.role,
+        content: message.content,
+        suggestions: serializeJson(message.suggestions),
+        createdAt: message.createdAt,
+      })
+      .run();
+
+    this.database.db
+      .update(projectChatSessionsTable)
+      .set({
+        updatedAt: message.createdAt,
+      })
+      .where(eq(projectChatSessionsTable.id, message.sessionId))
+      .run();
+
+    return message;
+  }
+
   async updateProjectRuntime(projectId: string, runtime: ProjectRuntimeState) {
     const project = await this.getProject(projectId);
 
@@ -2016,6 +2160,7 @@ export class SQLiteProjectRepository implements ProjectRepository {
           ideaPrompt: syncedProject.ideaPrompt,
           stackPreferences: serializeJson(syncedProject.stackPreferences),
           constraints: serializeJson(syncedProject.constraints),
+          defaultChatBotId: syncedProject.defaultChatBotId,
           definitionOfDone: serializeJson(syncedProject.definitionOfDone),
           workspacePath: syncedProject.workspace.rootPath,
           repoProvider: syncedProject.workspace.repoProvider,
@@ -2142,7 +2287,11 @@ export class SQLiteProjectRepository implements ProjectRepository {
               name: agent.name,
               role: agent.role,
               policyRole: agent.policyRole,
+              runtimeBackend: agent.runtimeBackend,
+              provider: agent.provider ?? null,
               model: agent.model,
+              fallbackProviders: serializeJson(agent.fallbackProviders),
+              openclawBotId: agent.openclawBotId ?? null,
               status: agent.status,
               enabled: agent.enabled,
               instructionsSummary: agent.instructionsSummary,
