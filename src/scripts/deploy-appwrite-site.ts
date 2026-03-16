@@ -108,20 +108,13 @@ async function syncSiteVariables(sites: Sites, siteId: string) {
 
 function createSourceArchive() {
   const archivePath = path.join(os.tmpdir(), `clonable-site-${Date.now()}.tar.gz`);
-  const tar = spawnSync(
-    "tar",
+  const archive = spawnSync(
+    "git",
     [
-      "-czf",
-      archivePath,
-      "--exclude=./.git",
-      "--exclude=./.next",
-      "--exclude=./.tmp",
-      "--exclude=./node_modules",
-      "--exclude=./data",
-      "--exclude=./projects",
-      "--exclude=./.env.local",
-      "--exclude=./.env",
-      ".",
+      "archive",
+      "--format=tar.gz",
+      `--output=${archivePath}`,
+      "HEAD",
     ],
     {
       cwd: process.cwd(),
@@ -130,9 +123,9 @@ function createSourceArchive() {
     },
   );
 
-  if (tar.status !== 0) {
+  if (archive.status !== 0) {
     throw new Error(
-      `Failed to create deployment archive: ${tar.stderr.toString("utf8").trim() || "unknown tar error"}`,
+      `Failed to create deployment archive: ${archive.stderr.toString("utf8").trim() || "unknown git archive error"}`,
     );
   }
 
