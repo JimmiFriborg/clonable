@@ -12,7 +12,7 @@ pnpm-debug.log*
 *.tsbuildinfo
 *.db
 data/
-projects/
+/projects/
 .tmp/
 .env
 .env.local
