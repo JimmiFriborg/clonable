@@ -20,6 +20,16 @@ function sleep(milliseconds: number) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 
+function removeLockFile(lockPath: string) {
+  try {
+    fs.unlinkSync(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
 function hasTable(sqlite: Database.Database, tableName: string) {
   return Boolean(
     sqlite
@@ -96,12 +106,18 @@ function ensureMigrations(
         throw error;
       }
 
-      if (fs.existsSync(lockPath)) {
+      try {
         const lockAge = Date.now() - fs.statSync(lockPath).mtimeMs;
         if (lockAge > MIGRATION_LOCK_TIMEOUT_MS) {
-          fs.unlinkSync(lockPath);
+          removeLockFile(lockPath);
           continue;
         }
+      } catch (lockError) {
+        if ((lockError as NodeJS.ErrnoException).code === "ENOENT") {
+          continue;
+        }
+
+        throw lockError;
       }
 
       if (Date.now() - start > MIGRATION_LOCK_TIMEOUT_MS) {
@@ -115,9 +131,7 @@ function ensureMigrations(
   try {
     migrate(db, { migrationsFolder });
   } finally {
-    if (fs.existsSync(lockPath)) {
-      fs.unlinkSync(lockPath);
-    }
+    removeLockFile(lockPath);
   }
 }
 
