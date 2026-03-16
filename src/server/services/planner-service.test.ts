@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildFixturePlannerDraft,
   generatePlannerDraft,
   PlannerServiceError,
 } from "@/server/services/planner-service";
@@ -8,6 +9,7 @@ import * as providerGateway from "@/server/services/provider-gateway";
 
 const originalApiKey = process.env.OPENAI_API_KEY;
 const originalPlannerProvider = process.env.CLONABLE_PLANNER_PROVIDER;
+const originalFixturePlanner = process.env.CLONABLE_PLANNER_USE_FIXTURE;
 
 beforeEach(() => {
   process.env.OPENAI_API_KEY = "test-key";
@@ -17,6 +19,7 @@ beforeEach(() => {
 afterEach(() => {
   process.env.OPENAI_API_KEY = originalApiKey;
   process.env.CLONABLE_PLANNER_PROVIDER = originalPlannerProvider;
+  process.env.CLONABLE_PLANNER_USE_FIXTURE = originalFixturePlanner;
   vi.restoreAllMocks();
 });
 
@@ -77,5 +80,29 @@ describe("planner-service", () => {
         stackPreferences: ["Next.js"],
       }),
     ).rejects.toBeInstanceOf(PlannerServiceError);
+  });
+
+  it("returns a deterministic fixture draft when fixture mode is enabled", async () => {
+    process.env.CLONABLE_PLANNER_USE_FIXTURE = "true";
+    const gatewaySpy = vi.spyOn(providerGateway, "generateStructuredObject");
+
+    const draft = await generatePlannerDraft({
+      name: "Fixture project",
+      ideaPrompt: "Build a stable test loop.",
+      targetUser: "Founders",
+      constraints: ["Local-first"],
+      stackPreferences: ["Next.js"],
+    });
+
+    expect(draft).toEqual(
+      buildFixturePlannerDraft({
+        name: "Fixture project",
+        ideaPrompt: "Build a stable test loop.",
+        targetUser: "Founders",
+        constraints: ["Local-first"],
+        stackPreferences: ["Next.js"],
+      }),
+    );
+    expect(gatewaySpy).not.toHaveBeenCalled();
   });
 });

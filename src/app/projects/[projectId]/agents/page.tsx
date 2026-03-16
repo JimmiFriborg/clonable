@@ -1,13 +1,13 @@
 import { notFound } from "next/navigation";
 
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { PageIntro } from "@/components/ui/page-intro";
 import {
   createProjectAgentAction,
   toggleProjectOrchestrationAction,
   updateProjectAgentAction,
 } from "@/features/projects/actions";
 import { AgentForm } from "@/features/projects/components/agent-form";
-import { PageIntro } from "@/components/ui/page-intro";
 import {
   AgentRoleBadge,
   AgentStatusBadge,
@@ -102,8 +102,8 @@ export default async function AgentsPage({
               </div>
               <div className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white">
                 {agent.runtimeBackend === "openclaw"
-                  ? `OpenClaw · ${agent.openclawBotId ?? "bot"}`
-                  : `${agent.provider ?? "provider"} · ${agent.model}`}
+                  ? `OpenClaw - ${agent.openclawBotId ?? "bot"}`
+                  : `${agent.provider ?? "provider"} - ${agent.model}`}
               </div>
             </div>
 

@@ -19,6 +19,25 @@ npm run dev
 
 See the foundation docs in `docs/foundation/`.
 
+First-time setup:
+
+- [docs/foundation/13-first-time-setup.md](docs/foundation/13-first-time-setup.md)
+
+## Test coverage
+
+Unit and service tests:
+
+```bash
+npm test
+```
+
+End-to-end tests:
+
+```bash
+npm run e2e:install
+npm run test:e2e
+```
+
 ## Deployment target
 
 The first hosted Clonable target is planned as:
@@ -26,7 +45,7 @@ The first hosted Clonable target is planned as:
 - site: `https://cloneable.sites.friborg.uk`
 - auth/metadata backbone: existing AgentBoard Appwrite project
 
-See [docs/foundation/11-deployment-plan.md](C:/Users/jimmi/Documents/GitHub/Clonable.dev/docs/foundation/11-deployment-plan.md) for the current rollout plan.
+See [docs/foundation/11-deployment-plan.md](docs/foundation/11-deployment-plan.md) for the current rollout plan.
 
 ## Container Release
 
@@ -34,4 +53,4 @@ Clonable now includes a production Docker path and standalone Next.js output for
 
 Runbook:
 
-- [docs/foundation/12-hosted-deploy-runbook.md](C:/Users/jimmi/Documents/GitHub/Clonable.dev/docs/foundation/12-hosted-deploy-runbook.md)
+- [docs/foundation/12-hosted-deploy-runbook.md](docs/foundation/12-hosted-deploy-runbook.md)

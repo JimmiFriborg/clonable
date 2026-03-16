@@ -86,6 +86,7 @@ export default async function TaskDetailPage({
           </CardDescription>
 
           <form
+            key={`owner-${task.id}-${task.ownerAgentId ?? "none"}-${task.lastUpdated}`}
             action={assignTaskOwnerAction.bind(
               null,
               projectId,
@@ -120,6 +121,7 @@ export default async function TaskDetailPage({
           </form>
 
           <form
+            key={`transition-${task.id}-${task.state}-${task.lastUpdated}`}
             action={transitionTaskAction.bind(
               null,
               projectId,

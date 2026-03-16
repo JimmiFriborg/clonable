@@ -18,6 +18,14 @@ export default async function GoalPage({
   }
 
   const { project } = dashboard;
+  const goalFormKey = [
+    project.vision,
+    project.mvp.goalStatement,
+    project.mvp.summary,
+    project.mvp.successDefinition,
+    project.mvp.boundaryReasoning,
+    project.definitionOfDone.join("|"),
+  ].join("::");
 
   return (
     <div className="space-y-6">
@@ -110,7 +118,11 @@ export default async function GoalPage({
           planner has produced a first draft.
         </CardDescription>
 
-        <form action={updateProjectGoalAction.bind(null, project.id)} className="mt-6 grid gap-5">
+        <form
+          key={goalFormKey}
+          action={updateProjectGoalAction.bind(null, project.id)}
+          className="mt-6 grid gap-5"
+        >
           <label className="grid gap-2">
             <span className="text-sm font-semibold text-slate-900">Vision</span>
             <textarea

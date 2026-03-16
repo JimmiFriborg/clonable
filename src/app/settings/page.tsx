@@ -57,6 +57,15 @@ export default async function SettingsPage() {
           </Card>
 
           <Card>
+            <CardTitle>First-time AI defaults</CardTitle>
+            <CardDescription className="mt-3">
+              The planner uses the configured provider router with OpenAI as the default.
+              Built-in project chat is OpenClaw-only. Project Manager and Reviewer default to
+              OpenClaw, while write-capable builders stay on direct providers unless changed.
+            </CardDescription>
+          </Card>
+
+          <Card>
             <CardTitle>Git and safety defaults</CardTitle>
             <CardDescription className="mt-3">
               Clonable uses local Git workspaces and user-owned remotes only. No Lovable-created repo,
