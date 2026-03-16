@@ -27,3 +27,11 @@ The first hosted Clonable target is planned as:
 - auth/metadata backbone: existing AgentBoard Appwrite project
 
 See [docs/foundation/11-deployment-plan.md](C:/Users/jimmi/Documents/GitHub/Clonable.dev/docs/foundation/11-deployment-plan.md) for the current rollout plan.
+
+## Container Release
+
+Clonable now includes a production Docker path and standalone Next.js output for the first hosted deployment target.
+
+Runbook:
+
+- [docs/foundation/12-hosted-deploy-runbook.md](C:/Users/jimmi/Documents/GitHub/Clonable.dev/docs/foundation/12-hosted-deploy-runbook.md)
