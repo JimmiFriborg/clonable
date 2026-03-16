@@ -21,9 +21,7 @@ test.describe("project creation", () => {
       page.getByRole("button", { name: "Create project" }).click(),
     ]);
 
-    await expect(
-      page.getByRole("heading", { name: "Chat with OpenClaw, keep every step explicit" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Build loop" })).toBeVisible();
     await expect(page.locator("p").filter({ hasText: /^MVP boundary$/ })).toBeVisible();
     await expect(page.getByRole("heading", { name: projectName, exact: true })).toBeVisible();
   });

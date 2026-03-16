@@ -66,9 +66,6 @@ export function ProjectShell({
               <h1 className="font-display text-2xl font-semibold tracking-tight">
                 {projectName}
               </h1>
-              <p className="mt-2 text-sm leading-6 text-white/65">
-                Local-first hybrid AI builder foundation
-              </p>
             </div>
             <Badge tone="warm" className="bg-white/10 text-white ring-white/10">
               {projectStatus}

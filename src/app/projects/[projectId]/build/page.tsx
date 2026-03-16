@@ -28,6 +28,58 @@ import {
 import { getProjectDashboard } from "@/server/services/project-service";
 import { getProjectChatSurface } from "@/server/services/openclaw-service";
 
+function normalizePlannerText(value: string | undefined, fallback: string) {
+  const source = value?.trim() ? value : fallback;
+
+  return source
+    .replace(/\r/g, "")
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/\n{2,}/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function normalizeLongformText(value: string | undefined) {
+  return (value ?? "")
+    .replace(/\r/g, "")
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function truncateText(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength).trimEnd()}...`;
+}
+
+function buildMessagePreview(value: string) {
+  const normalized = normalizeLongformText(value);
+  const segments = normalized
+    .split(/\n{2,}/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const preview = truncateText(segments.slice(0, 3).join("\n\n"), 520);
+  const isLong = normalized.length > preview.length || segments.length > 3;
+
+  return {
+    preview,
+    full: normalized,
+    isLong,
+  };
+}
+
 export default async function ProjectBuildPage({
   params,
   searchParams,
@@ -56,6 +108,35 @@ export default async function ProjectBuildPage({
     (agent) => agent.id === activeRun?.agentId || agent.currentTaskId === activeTask?.id,
   );
   const returnPath = `/projects/${projectId}/build`;
+  const projectGoal = truncateText(
+    normalizePlannerText(dashboard.project.mvp.goalStatement, dashboard.project.summary),
+    140,
+  );
+  const projectSummary = truncateText(
+    normalizePlannerText(dashboard.project.mvp.summary, dashboard.project.summary),
+    240,
+  );
+  const boundaryReasoning = truncateText(
+    normalizePlannerText(
+      dashboard.project.mvp.boundaryReasoning,
+      "Clarify the MVP boundary before expanding scope.",
+    ),
+    220,
+  );
+  const currentFocus = truncateText(
+    normalizePlannerText(dashboard.project.currentFocus, "Choose the smallest next step."),
+    140,
+  );
+  const laterScope = dashboard.project.mvp.laterScope
+    .map((item) => normalizePlannerText(item, item))
+    .filter(Boolean)
+    .slice(0, 4);
+  const definitionOfDone = dashboard.project.definitionOfDone
+    .map((item) => normalizePlannerText(item, item))
+    .filter(Boolean)
+    .slice(0, 3);
+  const visibleMessages = chat.messages.slice(-4);
+  const hiddenMessageCount = Math.max(chat.messages.length - visibleMessages.length, 0);
   const totalTasks = Math.max(dashboard.counts.totalTasks, 1);
   const completionPercent = Math.round(
     (dashboard.counts.doneTasks / totalTasks) * 100,
@@ -95,8 +176,8 @@ export default async function ProjectBuildPage({
     <div className="space-y-6">
       <PageIntro
         eyebrow="Build"
-        title="Chat with OpenClaw, keep every step explicit"
-        description="The Build surface keeps the goal, MVP boundary, next tasks, active work, preview status, and OpenClaw chat in the same loop so iteration stays visible."
+        title="Build loop"
+        description="Goal, MVP boundary, next tasks, and chat in one place."
       />
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -139,10 +220,29 @@ export default async function ProjectBuildPage({
                   OpenClaw chat
                 </span>
               </div>
-              <CardTitle className="text-2xl">{dashboard.project.mvp.goalStatement}</CardTitle>
-              <CardDescription className="max-w-3xl text-base">
-                {dashboard.project.mvp.summary || dashboard.project.summary}
-              </CardDescription>
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-700">
+                  Current goal
+                </p>
+                <CardTitle className="text-2xl">{projectGoal}</CardTitle>
+                <CardDescription className="max-w-3xl text-base">{projectSummary}</CardDescription>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Link
+                  href={`/projects/${projectId}/goal`}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
+                >
+                  Refine MVP
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+                <Link
+                  href={`/projects/${projectId}/tasks`}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
+                >
+                  Review tasks
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </div>
             </div>
 
             <div className="grid gap-3 rounded-[24px] border border-slate-200 bg-white/80 p-4 text-sm text-slate-700">
@@ -158,20 +258,39 @@ export default async function ProjectBuildPage({
             </div>
           </div>
 
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
+          <div className="mt-6 grid gap-4 xl:grid-cols-3">
             <div className="rounded-[24px] border border-slate-200 bg-white p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-700">
                 MVP boundary
               </p>
-              <p className="mt-3 text-sm leading-6 text-slate-700">
-                {dashboard.project.mvp.boundaryReasoning || "Clarify the MVP boundary before expanding scope."}
-              </p>
+              <p className="mt-3 text-sm leading-6 text-slate-700">{boundaryReasoning}</p>
             </div>
             <div className="rounded-[24px] border border-slate-200 bg-slate-950 p-4 text-white">
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-100/80">
                 What matters now
               </p>
-              <p className="mt-3 text-sm leading-6 text-white/80">{dashboard.project.currentFocus}</p>
+              <p className="mt-3 text-sm leading-6 text-white/80">{currentFocus}</p>
+            </div>
+            <div className="rounded-[24px] border border-slate-200 bg-white p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
+                Later, not now
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {laterScope.length > 0 ? (
+                  laterScope.map((item) => (
+                    <span
+                      key={item}
+                      className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700"
+                    >
+                      {item}
+                    </span>
+                  ))
+                ) : (
+                  <p className="text-sm leading-6 text-slate-600">
+                    Keep expansion ideas parked here until the first MVP slice is done.
+                  </p>
+                )}
+              </div>
             </div>
           </div>
 
@@ -264,113 +383,183 @@ export default async function ProjectBuildPage({
                 </div>
               </div>
 
-              <div className="mt-5 space-y-4">
-                {chat.messages.length > 0 ? (
-                  chat.messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`rounded-[24px] border p-4 ${
-                        message.role === "assistant"
-                          ? "border-teal-200 bg-teal-50/70"
-                          : message.role === "user"
-                            ? "border-slate-200 bg-slate-950 text-white"
-                            : "border-slate-200 bg-white"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2 text-sm font-semibold">
-                          <Bot className="h-4 w-4" />
-                          {message.role === "assistant" ? "OpenClaw" : "You"}
-                        </div>
-                        <span className="text-xs opacity-70">{message.createdAt}</span>
-                      </div>
-                      <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{message.content}</p>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
+                    Target user
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-700">
+                    {dashboard.project.targetUser || "Define the user in Goal & MVP."}
+                  </p>
+                </div>
+                <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
+                    Done means
+                  </p>
+                  <div className="mt-2 space-y-2">
+                    {definitionOfDone.length > 0 ? (
+                      definitionOfDone.map((item) => (
+                        <p key={item} className="text-sm leading-6 text-slate-700">
+                          {item}
+                        </p>
+                      ))
+                    ) : (
+                      <p className="text-sm leading-6 text-slate-600">
+                        Add project definition of done in Goal &amp; MVP.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
 
-                      {message.suggestions.length > 0 ? (
-                        <div className="mt-4 space-y-3 border-t border-current/10 pt-4">
-                          <p className="text-xs font-semibold uppercase tracking-[0.24em] opacity-75">
-                            Explicit suggestions
-                          </p>
-                          {message.suggestions.map((suggestion) => (
-                            <div
-                              key={suggestion.id}
-                              className="rounded-[20px] border border-slate-200 bg-white p-4 text-slate-900"
-                            >
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="rounded-full bg-slate-950 px-3 py-1 text-xs font-semibold text-white">
-                                  {suggestion.kind}
-                                </span>
-                                {suggestion.priority ? (
-                                  <PriorityBadge priority={suggestion.priority} />
-                                ) : null}
-                              </div>
-                              <h3 className="mt-3 font-semibold text-slate-950">{suggestion.title}</h3>
-                              <p className="mt-2 text-sm leading-6 text-slate-700">
-                                {suggestion.summary}
-                              </p>
-                              {suggestion.kind === "task" ? (
-                                dashboard.project.features.length > 0 ? (
-                                  <form
-                                    action={createTaskFromChatSuggestionAction.bind(
-                                      null,
-                                      projectId,
-                                      returnPath,
-                                    )}
-                                    className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]"
-                                  >
-                                    <input type="hidden" name="sessionId" value={message.sessionId} />
-                                    <input type="hidden" name="messageId" value={message.id} />
-                                    <input type="hidden" name="suggestionId" value={suggestion.id} />
-                                    <select
-                                      name="featureId"
-                                      defaultValue={
-                                        dashboard.project.features.find(
-                                          (feature) => feature.title === suggestion.featureTitle,
-                                        )?.id ?? dashboard.project.features[0]?.id
-                                      }
-                                      className="rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600"
+              {hiddenMessageCount > 0 ? (
+                <div className="mt-4 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  Showing the latest {visibleMessages.length} messages in this thread. Older context
+                  stays attached to the session.
+                </div>
+              ) : null}
+
+              <div className="mt-5 space-y-4">
+                {visibleMessages.length > 0 ? (
+                  visibleMessages.map((message) => {
+                    const messageBody =
+                      message.role === "assistant"
+                        ? buildMessagePreview(message.content)
+                        : {
+                            preview: message.content,
+                            full: message.content,
+                            isLong: false,
+                          };
+
+                    return (
+                      <div
+                        key={message.id}
+                        className={`rounded-[24px] border p-4 ${
+                          message.role === "assistant"
+                            ? "border-teal-200 bg-teal-50/70"
+                            : message.role === "user"
+                              ? "border-slate-200 bg-slate-950 text-white"
+                              : "border-slate-200 bg-white"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2 text-sm font-semibold">
+                            <Bot className="h-4 w-4" />
+                            {message.role === "assistant" ? "OpenClaw" : "You"}
+                          </div>
+                          <span className="text-xs opacity-70">{message.createdAt}</span>
+                        </div>
+                        <p className="mt-3 whitespace-pre-wrap text-sm leading-6">
+                          {messageBody.preview}
+                        </p>
+
+                        {messageBody.isLong ? (
+                          <details className="mt-4 rounded-[18px] border border-current/10 bg-white/70 p-4 text-slate-700">
+                            <summary className="cursor-pointer text-sm font-semibold text-slate-900">
+                              Open full response
+                            </summary>
+                            <p className="mt-3 whitespace-pre-wrap text-sm leading-6">
+                              {messageBody.full}
+                            </p>
+                          </details>
+                        ) : null}
+
+                        {message.suggestions.length > 0 ? (
+                          <div className="mt-4 space-y-3 border-t border-current/10 pt-4">
+                            <p className="text-xs font-semibold uppercase tracking-[0.24em] opacity-75">
+                              Explicit suggestions
+                            </p>
+                            {message.suggestions.map((suggestion) => (
+                              <div
+                                key={suggestion.id}
+                                className="rounded-[20px] border border-slate-200 bg-white p-4 text-slate-900"
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="rounded-full bg-slate-950 px-3 py-1 text-xs font-semibold text-white">
+                                    {suggestion.kind}
+                                  </span>
+                                  {suggestion.priority ? (
+                                    <PriorityBadge priority={suggestion.priority} />
+                                  ) : null}
+                                </div>
+                                <h3 className="mt-3 font-semibold text-slate-950">
+                                  {suggestion.title}
+                                </h3>
+                                <p className="mt-2 text-sm leading-6 text-slate-700">
+                                  {suggestion.summary}
+                                </p>
+                                {suggestion.kind === "task" ? (
+                                  dashboard.project.features.length > 0 ? (
+                                    <form
+                                      action={createTaskFromChatSuggestionAction.bind(
+                                        null,
+                                        projectId,
+                                        returnPath,
+                                      )}
+                                      className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]"
                                     >
-                                      {dashboard.project.features.map((feature) => (
-                                        <option key={feature.id} value={feature.id}>
-                                          {feature.title}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <button
-                                      type="submit"
-                                      className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
-                                    >
-                                      Create task
-                                    </button>
-                                  </form>
+                                      <input
+                                        type="hidden"
+                                        name="sessionId"
+                                        value={message.sessionId}
+                                      />
+                                      <input type="hidden" name="messageId" value={message.id} />
+                                      <input
+                                        type="hidden"
+                                        name="suggestionId"
+                                        value={suggestion.id}
+                                      />
+                                      <select
+                                        name="featureId"
+                                        defaultValue={
+                                          dashboard.project.features.find(
+                                            (feature) => feature.title === suggestion.featureTitle,
+                                          )?.id ?? dashboard.project.features[0]?.id
+                                        }
+                                        className="rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600"
+                                      >
+                                        {dashboard.project.features.map((feature) => (
+                                          <option key={feature.id} value={feature.id}>
+                                            {feature.title}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <button
+                                        type="submit"
+                                        className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+                                      >
+                                        Create task
+                                      </button>
+                                    </form>
+                                  ) : (
+                                    <div className="mt-4">
+                                      <Link
+                                        href={`/projects/${projectId}/features`}
+                                        className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
+                                      >
+                                        Create a feature first
+                                        <ArrowRight className="h-4 w-4" />
+                                      </Link>
+                                    </div>
+                                  )
                                 ) : (
                                   <div className="mt-4">
                                     <Link
-                                      href={`/projects/${projectId}/features`}
+                                      href={`/projects/${projectId}/goal`}
                                       className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
                                     >
-                                      Create a feature first
+                                      Review in Goal & MVP
                                       <ArrowRight className="h-4 w-4" />
                                     </Link>
                                   </div>
-                                )
-                              ) : (
-                                <div className="mt-4">
-                                  <Link
-                                    href={`/projects/${projectId}/goal`}
-                                    className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
-                                  >
-                                    Review in Goal & MVP
-                                    <ArrowRight className="h-4 w-4" />
-                                  </Link>
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ))
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })
                 ) : (
                   <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 p-6 text-sm leading-6 text-slate-600">
                     Start a thread with one of your OpenClaw bots and turn good suggestions into explicit work instead of hidden scope changes.
@@ -414,25 +603,31 @@ export default async function ProjectBuildPage({
               Next recommended tasks
             </p>
             <div className="mt-4 space-y-4">
-              {dashboard.nextTasks.map((task) => (
-                <div key={task.id} className="rounded-[24px] border border-slate-200 bg-white p-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <TaskStatusBadge status={task.state} />
-                    <PriorityBadge priority={task.priority} />
+              {dashboard.nextTasks.length > 0 ? (
+                dashboard.nextTasks.map((task) => (
+                  <div key={task.id} className="rounded-[24px] border border-slate-200 bg-white p-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <TaskStatusBadge status={task.state} />
+                      <PriorityBadge priority={task.priority} />
+                    </div>
+                    <h3 className="mt-3 font-semibold text-slate-950">{task.title}</h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">{task.description}</p>
+                    <div className="mt-4">
+                      <Link
+                        href={`/projects/${projectId}/tasks/${task.id}`}
+                        className="inline-flex items-center gap-2 text-sm font-semibold text-teal-700 transition hover:text-teal-900"
+                      >
+                        Open task
+                        <ArrowRight className="h-4 w-4" />
+                      </Link>
+                    </div>
                   </div>
-                  <h3 className="mt-3 font-semibold text-slate-950">{task.title}</h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">{task.description}</p>
-                  <div className="mt-4">
-                    <Link
-                      href={`/projects/${projectId}/tasks/${task.id}`}
-                      className="inline-flex items-center gap-2 text-sm font-semibold text-teal-700 transition hover:text-teal-900"
-                    >
-                      Open task
-                      <ArrowRight className="h-4 w-4" />
-                    </Link>
-                  </div>
+                ))
+              ) : (
+                <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
+                  No task is ready yet. Tighten the MVP in Goal &amp; MVP or open Tasks to route the first slice.
                 </div>
-              ))}
+              )}
             </div>
           </Card>
 

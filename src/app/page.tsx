@@ -25,9 +25,8 @@ export default async function HomePage() {
                   Build the MVP first. Keep the momentum visible.
                 </h1>
                 <p className="max-w-3xl text-base leading-7 text-white/78">
-                  Clonable helps a user turn an idea into a real working MVP by defining the
-                  actual scope, structuring the work, coordinating specialized agents, and
-                  keeping progress easy to understand inside a real repository workflow.
+                  Define the real MVP, open the build loop, and keep planning, chat, tasks,
+                  and repo progress in one visible workflow.
                 </p>
               </div>
               <div className="flex flex-wrap gap-3 text-sm text-white/80">
@@ -50,10 +49,9 @@ export default async function HomePage() {
             </div>
             <div className="grid gap-4">
               <Card className="border-white/10 bg-white/6 text-white">
-                <CardTitle className="text-white">Current foundation slice</CardTitle>
+                <CardTitle className="text-white">Start here</CardTitle>
                 <CardDescription className="mt-3 text-white/70">
-                  Product definition, V1 PRD, architecture, database shape, and a working
-                  dashboard shell are now the first committed vertical slice.
+                  Create a project, confirm the MVP boundary, and move straight into the build loop.
                 </CardDescription>
               </Card>
               <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
@@ -104,12 +102,11 @@ export default async function HomePage() {
                 Projects
               </p>
               <h2 className="font-display text-3xl font-semibold tracking-tight text-slate-950">
-                Working foundation
+                Projects
               </h2>
             </div>
             <p className="max-w-lg text-right text-sm leading-6 text-slate-600">
-              Projects now open into the build loop directly, so MVP planning, OpenClaw chat,
-              task flow, and local repo progress stay in one visible surface.
+              Open a project and continue from the current MVP boundary, next tasks, and active work.
             </p>
           </div>
 
@@ -181,12 +178,12 @@ export default async function HomePage() {
             </div>
 
             <Card>
-              <CardTitle>Foundation deliverables in this repo</CardTitle>
+              <CardTitle>What Clonable gives you first</CardTitle>
               <div className="mt-4 space-y-3 text-sm leading-6 text-slate-700">
-                <p>1. Concise product definition and V1 PRD</p>
-                <p>2. Proposed architecture and information architecture</p>
-                <p>3. Database schema, agent design, and task lifecycle</p>
-                <p>4. Phased implementation plan and executable app scaffold</p>
+                <p>1. One clear MVP boundary</p>
+                <p>2. A visible build loop</p>
+                <p>3. Structured tasks and agents</p>
+                <p>4. A real repo-backed workspace</p>
               </div>
               <Link
                 href={projects[0] ? `/projects/${projects[0].id}/build` : "/projects/new"}
