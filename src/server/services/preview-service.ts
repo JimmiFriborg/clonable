@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import type { SpawnOptions } from "node:child_process";
 
 import type { ProjectRepository } from "@/server/domain/project-repository";
 import type { PreviewRecord, PreviewSettingsInput } from "@/server/domain/project";
@@ -13,6 +14,11 @@ const MAX_PREVIEW_LOG_LINES = 24;
 interface PreviewServiceDependencies {
   repository?: ProjectRepository;
   startupDelayMs?: number;
+}
+
+interface ParsedPreviewCommand {
+  command: string;
+  args: string[];
 }
 
 function nowIso() {
@@ -35,6 +41,111 @@ function ensureLogPath(rootPath: string, existingPath?: string) {
 
 function appendPreviewNote(logPath: string, line: string) {
   fs.appendFileSync(logPath, `[${nowIso()}] ${line}\n`, "utf-8");
+}
+
+function tokenizePreviewCommand(command: string) {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let escaping = false;
+
+  for (const character of command.trim()) {
+    if (escaping) {
+      current += character;
+      escaping = false;
+      continue;
+    }
+
+    if (character === "\\") {
+      escaping = true;
+      continue;
+    }
+
+    if (quote) {
+      if (character === quote) {
+        quote = null;
+      } else {
+        current += character;
+      }
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+
+    if (/\s/.test(character)) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += character;
+  }
+
+  if (escaping) {
+    current += "\\";
+  }
+
+  if (quote) {
+    throw new Error(`Unterminated quote in preview command: ${command}`);
+  }
+
+  if (current.length > 0) {
+    tokens.push(current);
+  }
+
+  if (tokens.length === 0) {
+    throw new Error("Preview command is empty.");
+  }
+
+  return tokens;
+}
+
+function resolveCommandPath(command: string) {
+  if (path.isAbsolute(command) && fs.existsSync(command)) {
+    return command;
+  }
+
+  const pathEntries = (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  const extensions =
+    process.platform === "win32"
+      ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM")
+          .split(";")
+          .map((extension) => extension.toLowerCase())
+      : [""];
+  const commandHasExtension = Boolean(path.extname(command));
+  const candidates =
+    process.platform === "win32" && !commandHasExtension
+      ? extensions.map((extension) => `${command}${extension}`)
+      : [command];
+
+  for (const entry of pathEntries) {
+    for (const candidate of candidates) {
+      const candidatePath = path.join(entry, candidate);
+
+      if (fs.existsSync(candidatePath)) {
+        return candidatePath;
+      }
+    }
+  }
+
+  return command;
+}
+
+function parsePreviewCommand(command: string): ParsedPreviewCommand {
+  const [rawCommand, ...args] = tokenizePreviewCommand(command);
+  return {
+    command: resolveCommandPath(rawCommand),
+    args,
+  };
 }
 
 function parsePreviewLogLine(line: string) {
@@ -212,17 +323,32 @@ export async function startProjectPreview(
   }
 
   const outputHandle = fs.openSync(logPath, "a");
-  const child = spawn(project.preview.command, {
+  const spawnOptions: SpawnOptions = {
     cwd: project.workspace.rootPath,
     env: {
       ...process.env,
       PORT: String(project.preview.port),
     },
-    shell: true,
     detached: true,
     stdio: ["ignore", outputHandle, outputHandle],
     windowsHide: true,
-  });
+  };
+  let child;
+
+  try {
+    const parsedCommand = parsePreviewCommand(project.preview.command);
+    child = spawn(parsedCommand.command, parsedCommand.args, spawnOptions);
+  } catch (error) {
+    appendPreviewNote(
+      logPath,
+      `Falling back to shell launch because command parsing failed: ${error instanceof Error ? error.message : "Unknown error"}.`,
+    );
+    child = spawn(project.preview.command, {
+      ...spawnOptions,
+      shell: true,
+    });
+  }
+
   child.unref();
   fs.closeSync(outputHandle);
 
