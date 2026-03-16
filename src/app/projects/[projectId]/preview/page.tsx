@@ -9,6 +9,7 @@ import {
   updatePreviewSettingsAction,
 } from "@/features/projects/actions";
 import { PageIntro } from "@/features/projects/components/page-intro";
+import { getDeploymentSurface } from "@/server/services/deployment-service";
 import { getProjectDashboard } from "@/server/services/project-service";
 
 export default async function PreviewPage({
@@ -17,13 +18,17 @@ export default async function PreviewPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const dashboard = await getProjectDashboard(projectId);
+  const [dashboard, deployment] = await Promise.all([
+    getProjectDashboard(projectId),
+    Promise.resolve(getDeploymentSurface()),
+  ]);
 
   if (!dashboard) {
     notFound();
   }
 
   const { preview } = dashboard.project;
+  const previewControlEnabled = deployment.capabilities.previewControl;
   const returnPath = `/projects/${projectId}/preview`;
 
   return (
@@ -57,6 +62,14 @@ export default async function PreviewPage({
             project view.
           </CardDescription>
 
+          {!previewControlEnabled ? (
+            <div className="mt-5 rounded-[24px] border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+              This hosted deployment can show preview state, but it does not control machine-local
+              preview processes. Use your local Clonable instance for start, restart, stop, and
+              filesystem-bound runtime actions.
+            </div>
+          ) : null}
+
           <form
             action={updatePreviewSettingsAction.bind(null, projectId, returnPath)}
             className="mt-6 grid gap-4"
@@ -66,6 +79,7 @@ export default async function PreviewPage({
               <input
                 name="command"
                 defaultValue={preview.command}
+                disabled={!previewControlEnabled}
                 className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600"
               />
             </label>
@@ -77,6 +91,7 @@ export default async function PreviewPage({
                 type="number"
                 min={1}
                 defaultValue={preview.port}
+                disabled={!previewControlEnabled}
                 className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600"
               />
             </label>
@@ -84,6 +99,7 @@ export default async function PreviewPage({
             <div className="flex justify-end">
               <button
                 type="submit"
+                disabled={!previewControlEnabled}
                 className="inline-flex rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
               >
                 Save preview settings
@@ -95,6 +111,7 @@ export default async function PreviewPage({
             <form action={startPreviewAction.bind(null, projectId, returnPath)}>
               <button
                 type="submit"
+                disabled={!previewControlEnabled}
                 className="inline-flex w-full justify-center rounded-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
               >
                 Start
@@ -103,6 +120,7 @@ export default async function PreviewPage({
             <form action={restartPreviewAction.bind(null, projectId, returnPath)}>
               <button
                 type="submit"
+                disabled={!previewControlEnabled}
                 className="inline-flex w-full justify-center rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
               >
                 Restart
@@ -111,6 +129,7 @@ export default async function PreviewPage({
             <form action={stopPreviewAction.bind(null, projectId, returnPath)}>
               <button
                 type="submit"
+                disabled={!previewControlEnabled}
                 className="inline-flex w-full justify-center rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
               >
                 Stop
@@ -119,6 +138,7 @@ export default async function PreviewPage({
             <form action={refreshPreviewAction.bind(null, projectId, returnPath)}>
               <button
                 type="submit"
+                disabled={!previewControlEnabled}
                 className="inline-flex w-full justify-center rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
               >
                 Refresh

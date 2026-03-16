@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { commitWorkspaceAction, syncWorkspaceAction } from "@/features/projects/actions";
 import { PageIntro } from "@/features/projects/components/page-intro";
+import { getDeploymentSurface } from "@/server/services/deployment-service";
 import { getProjectDashboard } from "@/server/services/project-service";
 
 export default async function WorkspacePage({
@@ -11,13 +12,17 @@ export default async function WorkspacePage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const dashboard = await getProjectDashboard(projectId);
+  const [dashboard, deployment] = await Promise.all([
+    getProjectDashboard(projectId),
+    Promise.resolve(getDeploymentSurface()),
+  ]);
 
   if (!dashboard) {
     notFound();
   }
 
   const { workspace } = dashboard.project;
+  const workspaceExecutionEnabled = deployment.capabilities.workspaceExecution;
   const syncAction = syncWorkspaceAction.bind(null, projectId, `/projects/${projectId}/workspace`);
   const commitAction = commitWorkspaceAction.bind(
     null,
@@ -46,6 +51,7 @@ export default async function WorkspacePage({
           <form action={syncAction}>
             <button
               type="submit"
+              disabled={!workspaceExecutionEnabled}
               className="inline-flex rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
             >
               Sync workspace
@@ -53,12 +59,21 @@ export default async function WorkspacePage({
           </form>
         </div>
 
+        {!workspaceExecutionEnabled ? (
+          <div className="mt-5 rounded-[24px] border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+            This deployment is running in hosted mode, so local workspace execution is disabled
+            here. Use a local Clonable instance when you need filesystem sync, Git writes, and
+            checkpoint commits.
+          </div>
+        ) : null}
+
         <form action={commitAction} className="mt-6 grid gap-4 lg:grid-cols-[1fr_auto]">
           <label className="grid gap-2">
             <span className="text-sm font-semibold text-slate-900">Commit message</span>
             <input
               name="message"
               placeholder="Checkpoint workspace state"
+              disabled={!workspaceExecutionEnabled}
               className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600"
             />
           </label>
@@ -66,6 +81,7 @@ export default async function WorkspacePage({
           <div className="flex items-end">
             <button
               type="submit"
+              disabled={!workspaceExecutionEnabled}
               className="inline-flex w-full justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
             >
               Commit changes

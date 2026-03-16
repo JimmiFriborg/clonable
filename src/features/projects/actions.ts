@@ -40,6 +40,7 @@ import {
   sendProjectChatMessage,
   updateProjectDefaultChatBot,
 } from "@/server/services/openclaw-service";
+import { localExecutionEnabled } from "@/server/services/deployment-service";
 
 function parseLines(value: FormDataEntryValue | null) {
   return String(value ?? "")
@@ -92,6 +93,12 @@ function revalidateProjectPaths(projectId: string) {
   revalidatePath(`/projects/${projectId}/preview`);
   revalidatePath(`/projects/${projectId}/logs`);
   revalidatePath(`/projects/${projectId}/settings`);
+}
+
+function guardLocalExecution(returnPath: string) {
+  if (!localExecutionEnabled()) {
+    redirect(returnPath);
+  }
 }
 
 export async function createProjectAction(formData: FormData) {
@@ -334,6 +341,7 @@ export async function toggleProjectOrchestrationAction(
 }
 
 export async function syncWorkspaceAction(projectId: string, returnPath: string) {
+  guardLocalExecution(returnPath);
   await syncProjectWorkspace(projectId);
 
   revalidateProjectPaths(projectId);
@@ -345,6 +353,7 @@ export async function commitWorkspaceAction(
   returnPath: string,
   formData: FormData,
 ) {
+  guardLocalExecution(returnPath);
   await commitProjectWorkspace(projectId, String(formData.get("message") ?? "").trim());
 
   revalidateProjectPaths(projectId);
@@ -356,6 +365,7 @@ export async function updatePreviewSettingsAction(
   returnPath: string,
   formData: FormData,
 ) {
+  guardLocalExecution(returnPath);
   await updateProjectPreviewSettings(projectId, {
     command: String(formData.get("command") ?? "").trim(),
     port: Number(String(formData.get("port") ?? "3000").trim()),
@@ -366,6 +376,7 @@ export async function updatePreviewSettingsAction(
 }
 
 export async function startPreviewAction(projectId: string, returnPath: string) {
+  guardLocalExecution(returnPath);
   await startProjectPreview(projectId);
 
   revalidateProjectPaths(projectId);
@@ -373,6 +384,7 @@ export async function startPreviewAction(projectId: string, returnPath: string) 
 }
 
 export async function restartPreviewAction(projectId: string, returnPath: string) {
+  guardLocalExecution(returnPath);
   await restartProjectPreview(projectId);
 
   revalidateProjectPaths(projectId);
@@ -380,6 +392,7 @@ export async function restartPreviewAction(projectId: string, returnPath: string
 }
 
 export async function stopPreviewAction(projectId: string, returnPath: string) {
+  guardLocalExecution(returnPath);
   await stopProjectPreview(projectId);
 
   revalidateProjectPaths(projectId);
@@ -387,6 +400,7 @@ export async function stopPreviewAction(projectId: string, returnPath: string) {
 }
 
 export async function refreshPreviewAction(projectId: string, returnPath: string) {
+  guardLocalExecution(returnPath);
   await refreshProjectPreview(projectId);
 
   revalidateProjectPaths(projectId);
