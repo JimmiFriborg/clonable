@@ -22,6 +22,7 @@ See the foundation docs in `docs/foundation/`.
 First-time setup:
 
 - [docs/foundation/13-first-time-setup.md](docs/foundation/13-first-time-setup.md)
+- Hosted builds should keep `CLONABLE_PLANNER_TIMEOUT_MS=10000` so project creation falls back quickly instead of timing out the request.
 
 ## Test coverage
 

@@ -60,6 +60,7 @@ CLONABLE_ALLOW_LOCAL_EXECUTION=true
 OPENAI_API_KEY=your_openai_key
 CLONABLE_PLANNER_PROVIDER=openai
 CLONABLE_PLANNER_MODEL=gpt-5.4
+CLONABLE_PLANNER_TIMEOUT_MS=10000
 
 OPENCLAW_BASE_URL=https://your-openclaw-host
 OPENCLAW_API_KEY=your_openclaw_key
@@ -138,6 +139,10 @@ That mode:
 - skips external planner API calls
 - creates a deterministic MVP/phase/feature/task draft
 - is intended for testing and smoke checks, not real production planning
+
+Hosted project creation should also keep a planner timeout:
+
+- `CLONABLE_PLANNER_TIMEOUT_MS=10000` makes the hosted intake flow fall back to a manual MVP draft instead of timing out the whole request
 
 ## First Checks After Setup
 

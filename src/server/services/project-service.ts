@@ -29,6 +29,8 @@ import {
 import { generatePlannerDraft } from "@/server/services/planner-service";
 import { ensureTaskWorkspaceBranch } from "@/server/services/workspace-service";
 
+const DEFAULT_PLANNER_TIMEOUT_MS = 10_000;
+
 function buildFallbackMvp(input: ProjectIntakeInput): ProjectMvpUpdateInput {
   return {
     vision: input.ideaPrompt,
@@ -45,6 +47,34 @@ function buildFallbackMvp(input: ProjectIntakeInput): ProjectMvpUpdateInput {
       "The workspace remains inspectable and recoverable.",
     ],
   };
+}
+
+function getPlannerTimeoutMs() {
+  const raw = Number(process.env.CLONABLE_PLANNER_TIMEOUT_MS ?? DEFAULT_PLANNER_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_PLANNER_TIMEOUT_MS;
+}
+
+async function runPlannerWithTimeout(
+  planner: (input: ProjectIntakeInput) => Promise<PlannerDraft>,
+  input: ProjectIntakeInput,
+) {
+  const timeoutMs = getPlannerTimeoutMs();
+  let timer: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      planner(input),
+      new Promise<PlannerDraft>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`Planner timed out after ${timeoutMs}ms.`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 async function syncProjectMetadata(project: ProjectRecord | undefined) {
@@ -131,7 +161,7 @@ export async function createProjectFromIdea(
   });
 
   try {
-    const draft = await planner(input);
+    const draft = await runPlannerWithTimeout(planner, input);
     const updatedProject = await repository.savePlannerDraft(project.id, draft);
 
     await repository.recordEvent({

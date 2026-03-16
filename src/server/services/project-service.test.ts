@@ -4,8 +4,10 @@ import { createProjectFromIdea } from "@/server/services/project-service";
 import { createTempRepository } from "@/server/test-utils/temp-database";
 
 const cleanups: Array<() => void> = [];
+const originalPlannerTimeout = process.env.CLONABLE_PLANNER_TIMEOUT_MS;
 
 afterEach(() => {
+  process.env.CLONABLE_PLANNER_TIMEOUT_MS = originalPlannerTimeout;
   while (cleanups.length > 0) {
     cleanups.pop()?.();
   }
@@ -87,6 +89,34 @@ describe("project-service", () => {
     const stored = await temp.repository.getProject(project.id);
     expect(stored?.plannerState).toBe("failed");
     expect(stored?.mvp.goalStatement).toBe("Build a fallback flow.");
+    expect(stored?.tasks).toHaveLength(0);
+  });
+
+  it("falls back when the planner exceeds the configured timeout", async () => {
+    const temp = createTempRepository();
+    cleanups.push(temp.cleanup);
+    process.env.CLONABLE_PLANNER_TIMEOUT_MS = "10";
+
+    const project = await createProjectFromIdea(
+      {
+        name: "Timeout project",
+        ideaPrompt: "Build a timeout-safe planning flow.",
+        targetUser: "Solo founders",
+        constraints: ["Stable first-run"],
+        stackPreferences: ["Next.js"],
+      },
+      {
+        repository: temp.repository,
+        planner: async () =>
+          new Promise(() => {
+            // Intentionally unresolved so the timeout path is deterministic.
+          }),
+      },
+    );
+
+    const stored = await temp.repository.getProject(project.id);
+    expect(stored?.plannerState).toBe("failed");
+    expect(stored?.plannerMessage).toContain("Planner timed out");
     expect(stored?.tasks).toHaveLength(0);
   });
 });
