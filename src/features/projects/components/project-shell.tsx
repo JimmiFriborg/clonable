@@ -49,6 +49,7 @@ export function ProjectShell({
   children: ReactNode;
 }) {
   const pathname = usePathname();
+  const currentPath = pathname ?? "";
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(249,115,22,0.12),transparent_24%),linear-gradient(180deg,#fcfaf6_0%,#f6f0e6_100%)]">
@@ -77,7 +78,8 @@ export function ProjectShell({
           <div className="mt-6 space-y-2">
             {navItems.map((item) => {
               const href = `/projects/${projectId}${item.href}`;
-              const active = pathname === href || pathname.startsWith(`${href}/`);
+              const active =
+                currentPath === href || currentPath.startsWith(`${href}/`);
               const Icon = item.icon;
 
               return (
