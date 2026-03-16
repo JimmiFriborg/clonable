@@ -1,7 +1,9 @@
 import { listProjects, getProject } from "@/server/services/project-service";
+import { loadLocalEnv } from "@/scripts/load-local-env";
 import { syncProjectMetadataToAppwrite } from "@/server/infrastructure/appwrite/metadata-sync";
 
 async function main() {
+  loadLocalEnv();
   const projects = await listProjects();
 
   if (projects.length === 0) {

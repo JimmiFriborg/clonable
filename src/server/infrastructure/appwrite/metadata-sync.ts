@@ -22,6 +22,9 @@ async function createAttribute(
   collectionId: string,
   attribute: (typeof appwriteCollectionDefinitions)[number]["attributes"][number],
 ) {
+  const defaultValue =
+    attribute.required ?? false ? undefined : attribute.default;
+
   if (attribute.kind === "string") {
     await databases.createStringAttribute(
       databaseId,
@@ -29,7 +32,7 @@ async function createAttribute(
       attribute.key,
       attribute.size ?? 255,
       attribute.required ?? false,
-      attribute.default ? String(attribute.default) : undefined,
+      defaultValue !== undefined ? String(defaultValue) : undefined,
       false,
     );
     return;
@@ -40,11 +43,11 @@ async function createAttribute(
       databaseId,
       collectionId,
       attribute.key,
-      false,
-      undefined,
-      undefined,
-      attribute.default !== undefined ? Number(attribute.default) : undefined,
       attribute.required ?? false,
+      undefined,
+      undefined,
+      defaultValue !== undefined ? Number(defaultValue) : undefined,
+      false,
     );
     return;
   }
@@ -54,8 +57,38 @@ async function createAttribute(
     collectionId,
     attribute.key,
     attribute.required ?? false,
-    attribute.default !== undefined ? Boolean(attribute.default) : undefined,
+    defaultValue !== undefined ? Boolean(defaultValue) : undefined,
   );
+}
+
+function isNotFoundError(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    Number((error as { code?: unknown }).code) === 404
+  );
+}
+
+async function ensureDatabase(databases: Databases, databaseId: string) {
+  try {
+    await databases.get(databaseId);
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      throw error;
+    }
+
+    await databases.create(databaseId, "Clonable", true);
+  }
+}
+
+async function listCollectionAttributes(
+  databases: Databases,
+  databaseId: string,
+  collectionId: string,
+) {
+  const attributes = await databases.listAttributes(databaseId, collectionId);
+  return new Set(attributes.attributes.map((attribute) => attribute.key));
 }
 
 export async function ensureAppwriteCollections() {
@@ -69,16 +102,14 @@ export async function ensureAppwriteCollections() {
   const { databases } = clients;
   const { databaseId } = config;
 
-  let existingCollections: string[] = [];
-  try {
-    const collections = await databases.listCollections(databaseId);
-    existingCollections = collections.collections.map((collection) => collection.$id);
-  } catch {
-    await databases.create(databaseId, "Clonable", true);
-  }
+  await ensureDatabase(databases, databaseId);
+  const collections = await databases.listCollections(databaseId);
+  const existingCollections = new Set(
+    collections.collections.map((collection) => collection.$id),
+  );
 
   for (const definition of appwriteCollectionDefinitions) {
-    if (!existingCollections.includes(definition.id)) {
+    if (!existingCollections.has(definition.id)) {
       await databases.createCollection(
         databaseId,
         definition.id,
@@ -88,9 +119,20 @@ export async function ensureAppwriteCollections() {
         true,
       );
 
-      for (const attribute of definition.attributes) {
-        await createAttribute(databases, databaseId, definition.id, attribute);
+    }
+
+    const existingAttributes = await listCollectionAttributes(
+      databases,
+      databaseId,
+      definition.id,
+    );
+
+    for (const attribute of definition.attributes) {
+      if (existingAttributes.has(attribute.key)) {
+        continue;
       }
+
+      await createAttribute(databases, databaseId, definition.id, attribute);
     }
   }
 
