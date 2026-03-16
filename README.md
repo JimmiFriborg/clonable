@@ -23,6 +23,8 @@ First-time setup:
 
 - [docs/foundation/13-first-time-setup.md](docs/foundation/13-first-time-setup.md)
 - Hosted builds should keep `CLONABLE_PLANNER_TIMEOUT_MS=10000` so project creation falls back quickly instead of timing out the request.
+- The minimum useful AI setup is one provider key such as `OPENAI_API_KEY`. OpenClaw is optional.
+- Set `CLONABLE_GITHUB_OWNER` if you want new projects to derive a GitHub remote automatically.
 
 ## Test coverage
 

@@ -203,12 +203,36 @@ function defaultPlannerMessage(plannerState: ProjectRecord["plannerState"]) {
   return undefined;
 }
 
-function buildWorkspaceState(slug: string): WorkspaceRecord {
+function buildDefaultGithubRemoteUrl(slug: string) {
+  const owner = process.env.CLONABLE_GITHUB_OWNER?.trim();
+  if (!owner) {
+    return undefined;
+  }
+
+  const baseUrl = (process.env.CLONABLE_GITHUB_BASE_URL?.trim() || "https://github.com").replace(
+    /\/$/,
+    "",
+  );
+
+  return `${baseUrl}/${owner}/${slug}.git`;
+}
+
+function resolveRepoProvider(remoteUrl?: string) {
+  if (!remoteUrl) {
+    return "Local Git";
+  }
+
+  return /github/i.test(remoteUrl) ? "GitHub" : "Remote Git";
+}
+
+function buildWorkspaceState(slug: string, remoteUrl?: string): WorkspaceRecord {
   const projectsRoot = process.env.CLONABLE_PROJECTS_ROOT ?? "./projects";
+  const resolvedRemoteUrl = remoteUrl?.trim() || buildDefaultGithubRemoteUrl(slug);
 
   return {
     rootPath: path.resolve(process.cwd(), projectsRoot, slug),
-    repoProvider: "Local Git",
+    repoProvider: resolveRepoProvider(resolvedRemoteUrl),
+    remoteUrl: resolvedRemoteUrl,
     branch: "main",
     lastCommit: "No commits yet",
     dirtyFiles: [],
@@ -472,7 +496,7 @@ function syncProjectState(project: ProjectRecord): ProjectRecord {
 function buildDefaultProject(input: ProjectIntakeInput, slug: string): ProjectRecord {
   const createdAt = nowIso();
   const projectId = randomId("project");
-  const workspace = buildWorkspaceState(slug);
+  const workspace = buildWorkspaceState(slug, input.githubRepositoryUrl);
   const defaultChatBotId = resolveOpenClawDefaultBotId(process.env.OPENCLAW_DEFAULT_BOT_ID);
 
   return {
@@ -1297,6 +1321,7 @@ function mapProjectRowsToRecord(
       ? {
           rootPath: workspaceRow.rootPath,
           repoProvider: workspaceRow.repoProvider,
+          remoteUrl: workspaceRow.remoteUrl ?? undefined,
           branch: workspaceRow.branch,
           lastCommit: workspaceRow.lastCommit,
           dirtyFiles: parseJson(workspaceRow.dirtyFiles, [] as string[]),
@@ -1530,6 +1555,7 @@ function insertProjectGraph(db: AppDatabase, project: ProjectRecord) {
       projectId: syncedProject.id,
       rootPath: syncedProject.workspace.rootPath,
       repoProvider: syncedProject.workspace.repoProvider,
+      remoteUrl: syncedProject.workspace.remoteUrl ?? null,
       branch: syncedProject.workspace.branch,
       lastCommit: syncedProject.workspace.lastCommit,
       dirtyFiles: serializeJson(syncedProject.workspace.dirtyFiles),
@@ -2334,6 +2360,7 @@ export class SQLiteProjectRepository implements ProjectRepository {
           projectId: syncedProject.id,
           rootPath: syncedProject.workspace.rootPath,
           repoProvider: syncedProject.workspace.repoProvider,
+          remoteUrl: syncedProject.workspace.remoteUrl ?? null,
           branch: syncedProject.workspace.branch,
           lastCommit: syncedProject.workspace.lastCommit,
           dirtyFiles: serializeJson(syncedProject.workspace.dirtyFiles),
@@ -2344,6 +2371,7 @@ export class SQLiteProjectRepository implements ProjectRepository {
           set: {
             rootPath: syncedProject.workspace.rootPath,
             repoProvider: syncedProject.workspace.repoProvider,
+            remoteUrl: syncedProject.workspace.remoteUrl ?? null,
             branch: syncedProject.workspace.branch,
             lastCommit: syncedProject.workspace.lastCommit,
             dirtyFiles: serializeJson(syncedProject.workspace.dirtyFiles),

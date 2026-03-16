@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { ProjectRepository } from "@/server/domain/project-repository";
 import type { ProjectRecord } from "@/server/domain/project";
+import type { ChatBackend } from "@/server/domain/ai-provider";
 import type {
   CreateProjectChatSessionInput,
   CreateTaskFromChatSuggestionInput,
@@ -21,6 +22,10 @@ import {
 } from "@/server/domain/openclaw";
 import { syncProjectMetadataToAppwrite } from "@/server/infrastructure/appwrite/metadata-sync";
 import { sqliteProjectRepository } from "@/server/infrastructure/repositories/sqlite-project-repository";
+import {
+  generateStructuredObject,
+  getChatProviderSelection,
+} from "@/server/services/provider-gateway";
 import { runProjectOrchestrationCycle } from "@/server/services/orchestration-service";
 
 interface OpenClawConfig {
@@ -32,6 +37,13 @@ interface OpenClawConfig {
 interface OpenClawReply {
   reply: string;
   suggestions: ProjectChatSuggestion[];
+  warning?: string;
+}
+
+interface ProjectChatRuntime {
+  backend: ChatBackend;
+  configured: boolean;
+  assistantLabel: string;
   warning?: string;
 }
 
@@ -53,6 +65,11 @@ const openClawSuggestionSchema = z.object({
 });
 
 const openClawResponseSchema = z.object({
+  reply: z.string().min(1),
+  suggestions: z.array(openClawSuggestionSchema).default([]),
+});
+
+const providerChatResponseSchema = z.object({
   reply: z.string().min(1),
   suggestions: z.array(openClawSuggestionSchema).default([]),
 });
@@ -79,6 +96,36 @@ function buildFallbackBotCatalog(defaultBotId?: string): OpenClawCatalogResponse
     configured: Boolean(process.env.OPENCLAW_BASE_URL && process.env.OPENCLAW_API_KEY),
     defaultBotId: resolvedBotId,
     bots: defaultOpenClawBotProfiles,
+  };
+}
+
+function getProjectChatRuntime(): ProjectChatRuntime {
+  const openClawConfig = getOpenClawConfig();
+
+  if (openClawConfig.baseUrl && openClawConfig.apiKey) {
+    return {
+      backend: "openclaw",
+      configured: true,
+      assistantLabel: "OpenClaw",
+    };
+  }
+
+  const provider = getChatProviderSelection();
+  if (provider.configured) {
+    return {
+      backend: "provider",
+      configured: true,
+      assistantLabel: `${provider.provider} chat`,
+      warning: "OpenClaw is optional. Built-in chat is using your configured AI provider.",
+    };
+  }
+
+  return {
+    backend: "provider",
+    configured: false,
+    assistantLabel: "Project chat",
+    warning:
+      "Add at least one provider API key, such as OPENAI_API_KEY, to enable built-in project chat. OpenClaw is optional.",
   };
 }
 
@@ -190,7 +237,7 @@ async function fetchOpenClawBotCatalog(config: OpenClawConfig): Promise<OpenClaw
   if (!config.baseUrl || !config.apiKey) {
     return {
       ...fallback,
-      warning: "Set OPENCLAW_BASE_URL and OPENCLAW_API_KEY to enable live OpenClaw chat.",
+      warning: "OpenClaw is optional. Add OPENCLAW_BASE_URL and OPENCLAW_API_KEY only if you want OpenClaw-backed chat.",
     };
   }
 
@@ -244,7 +291,7 @@ async function requestOpenClawReply(
   if (!config.baseUrl || !config.apiKey) {
     return {
       reply:
-        "OpenClaw is not configured yet. Add OPENCLAW_BASE_URL and OPENCLAW_API_KEY to enable built-in project chat.",
+        "OpenClaw is not configured for this install. Clonable can still use provider-backed chat if you configure any supported AI provider.",
       suggestions: [],
       warning: "OpenClaw configuration is missing.",
     };
@@ -306,6 +353,76 @@ async function syncProjectMetadata(project: ProjectRecord | undefined) {
   }
 }
 
+async function requestProviderChatReply(
+  project: ProjectRecord,
+  bot: OpenClawBotProfile | undefined,
+  messages: ProjectChatMessage[],
+): Promise<OpenClawReply> {
+  const providerSelection = getChatProviderSelection();
+
+  if (!providerSelection.configured) {
+    return {
+      reply:
+        "Built-in chat is not configured yet. Add a provider API key such as OPENAI_API_KEY in Settings or env, then retry. OpenClaw is optional.",
+      suggestions: [],
+      warning: "No AI provider is configured for project chat.",
+    };
+  }
+
+  const transcript = messages
+    .slice(-12)
+    .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
+    .join("\n\n");
+
+  try {
+    const payload = await generateStructuredObject({
+      provider: providerSelection.provider,
+      model: providerSelection.model,
+      schema: providerChatResponseSchema,
+      schemaName: "project_chat_response",
+      instructions: [
+        "You are Clonable's project chat assistant.",
+        "Your job is to help the user refine the MVP, challenge scope drift, and suggest explicit next work.",
+        "Never imply that tasks were changed silently. Suggestions must stay explicit and user-visible.",
+        "Return concise useful prose plus optional suggestions.",
+        bot
+          ? `Adopt this assistant mode: ${bot.name}. ${bot.description}`
+          : "Use a practical product-builder tone.",
+      ].join(" "),
+      input: [
+        `Project context: ${JSON.stringify(buildProjectContext(project))}`,
+        `Conversation:\n${transcript}`,
+        "Respond with JSON containing { reply, suggestions[] }.",
+      ].join("\n\n"),
+    });
+
+    return normalizeOpenClawResponse(payload);
+  } catch (error) {
+    return {
+      reply:
+        "The configured AI provider could not generate a chat response right now. The thread was saved, so you can retry without losing context.",
+      suggestions: [],
+      warning: error instanceof Error ? error.message : "Provider-backed chat failed.",
+    };
+  }
+}
+
+async function requestProjectChatReply(
+  project: ProjectRecord,
+  botId: string,
+  messages: ProjectChatMessage[],
+  catalog: OpenClawCatalogResponse,
+): Promise<OpenClawReply> {
+  const runtime = getProjectChatRuntime();
+  const bot = catalog.bots.find((candidate) => candidate.id === botId);
+
+  if (runtime.backend === "openclaw") {
+    return requestOpenClawReply(project, botId, messages, getOpenClawConfig());
+  }
+
+  return requestProviderChatReply(project, bot, messages);
+}
+
 export async function getOpenClawCatalog(): Promise<OpenClawCatalogResponse> {
   return fetchOpenClawBotCatalog(getOpenClawConfig());
 }
@@ -321,6 +438,7 @@ export async function getProjectChatSurface(
   }
 
   const catalog = await getOpenClawCatalog();
+  const runtime = getProjectChatRuntime();
   const defaultBotId = resolveOpenClawDefaultBotId(project.defaultChatBotId, catalog.bots);
   const sessions = [...(await repository.listProjectChatSessions(projectId))].sort((left, right) =>
     right.updatedAt.localeCompare(left.updatedAt),
@@ -334,14 +452,15 @@ export async function getProjectChatSurface(
     : [];
 
   return {
-    backend: "openclaw",
-    configured: catalog.configured,
+    backend: runtime.backend,
+    configured: runtime.configured,
+    assistantLabel: runtime.assistantLabel,
     defaultBotId,
     bots: catalog.bots,
     sessions,
     activeSession,
     messages,
-    warning: catalog.warning,
+    warning: runtime.warning ?? catalog.warning,
   };
 }
 
@@ -391,7 +510,7 @@ export async function createProjectChatSession(
   await repository.recordEvent({
     projectId,
     type: "agent",
-    summary: "OpenClaw thread created",
+    summary: "Project chat thread created",
     reason: `A new ${bot?.name ?? resolvedBotId} chat thread was created for the project.`,
     payload: {
       botId: resolvedBotId,
@@ -415,6 +534,7 @@ export async function sendProjectChatMessage(
   }
 
   const catalog = await getOpenClawCatalog();
+  const runtime = getProjectChatRuntime();
   const resolvedBotId = resolveOpenClawDefaultBotId(input.botId, catalog.bots);
   const bot = catalog.bots.find((candidate) => candidate.id === resolvedBotId);
   let session =
@@ -451,7 +571,7 @@ export async function sendProjectChatMessage(
 
   await repository.createProjectChatMessage(projectId, userMessage);
   const history = await repository.listProjectChatMessages(projectId, session.id);
-  const reply = await requestOpenClawReply(project, resolvedBotId, history, getOpenClawConfig());
+  const reply = await requestProjectChatReply(project, resolvedBotId, history, catalog);
   const assistantMessage: ProjectChatMessage = {
     id: `message-${crypto.randomUUID()}`,
     projectId,
@@ -467,10 +587,10 @@ export async function sendProjectChatMessage(
   await repository.recordEvent({
     projectId,
     type: "agent",
-    summary: "OpenClaw replied",
+    summary: "Project chat replied",
     reason: reply.warning
-      ? `OpenClaw reply stored with warning: ${reply.warning}`
-      : `OpenClaw ${bot?.name ?? resolvedBotId} replied in project chat.`,
+      ? `${runtime.assistantLabel} reply stored with warning: ${reply.warning}`
+      : `${runtime.assistantLabel} ${bot?.name ?? resolvedBotId} replied in project chat.`,
     payload: {
       botId: resolvedBotId,
       sessionId: session.id,

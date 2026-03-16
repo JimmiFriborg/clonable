@@ -35,6 +35,7 @@ export const createProjectRequestSchema = z.object({
   targetUser: z.string().min(1),
   constraints: z.array(z.string()).default([]),
   stackPreferences: z.array(z.string()).default([]),
+  githubRepositoryUrl: z.string().trim().optional(),
 });
 
 export const createTaskRequestSchema = z.object({

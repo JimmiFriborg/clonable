@@ -5,8 +5,10 @@
 Get Clonable into a working state quickly with sensible default AI behavior:
 
 - planner uses a direct provider API
-- built-in chat uses OpenClaw
+- built-in chat uses a configured AI provider by default
+- OpenClaw is optional
 - orchestration stays visible and policy-driven
+- GitHub remotes can be carried from project creation
 - local and hosted modes stay explicit
 
 ## Default AI Behavior
@@ -25,9 +27,13 @@ Planner:
 
 Built-in chat:
 
-- Purpose: OpenClaw project chat inside the Build surface
-- Route: OpenClaw only
+- Purpose: project chat inside the Build surface
+- Default route: configured provider API
+- Optional route: OpenClaw
 - Config vars:
+  - `OPENAI_API_KEY` or another provider key
+  - `CLONABLE_CHAT_PROVIDER`
+  - `CLONABLE_CHAT_MODEL`
   - `OPENCLAW_BASE_URL`
   - `OPENCLAW_API_KEY`
   - `OPENCLAW_DEFAULT_BOT_ID`
@@ -35,8 +41,8 @@ Built-in chat:
 Agents:
 
 - `Product Planner`: provider-backed by default
-- `Project Manager`: OpenClaw by default
-- `Reviewer`: OpenClaw by default
+- `Project Manager`: provider-backed by default
+- `Reviewer`: provider-backed by default
 - `Frontend Builder`: provider-backed by default
 - `Backend Builder`: provider-backed by default
 - `Fixer`: provider-backed by default
@@ -60,11 +66,15 @@ CLONABLE_ALLOW_LOCAL_EXECUTION=true
 OPENAI_API_KEY=your_openai_key
 CLONABLE_PLANNER_PROVIDER=openai
 CLONABLE_PLANNER_MODEL=gpt-5.4
+CLONABLE_CHAT_PROVIDER=openai
+CLONABLE_CHAT_MODEL=gpt-5.4
 CLONABLE_PLANNER_TIMEOUT_MS=10000
+CLONABLE_GITHUB_OWNER=your-github-user-or-org
 
-OPENCLAW_BASE_URL=https://your-openclaw-host
-OPENCLAW_API_KEY=your_openclaw_key
-OPENCLAW_DEFAULT_BOT_ID=mvp-guide
+# Optional only:
+# OPENCLAW_BASE_URL=https://your-openclaw-host
+# OPENCLAW_API_KEY=your_openclaw_key
+# OPENCLAW_DEFAULT_BOT_ID=mvp-guide
 ```
 
 Then run:
@@ -90,6 +100,7 @@ In hosted mode:
 
 - project planning works
 - project/build/task/agent/log views work
+- provider-backed chat works if at least one provider is configured
 - OpenClaw chat works if configured
 - provider-backed planning works if configured
 - local workspace sync and local preview controls should stay disabled
@@ -116,10 +127,11 @@ NEXT_PUBLIC_CLONABLE_SITE_URL=https://cloneable.sites.friborg.uk
 Starter defaults:
 
 - Planner: `openai` + `gpt-5.4`
+- Built-in chat: `openai` + `gpt-5.4`
 - Frontend Builder: `openai` + `GPT-5.3-Codex`
 - Backend Builder: `openai` + `GPT-5.3-Codex`
-- Reviewer: OpenClaw bot `quality-guardian`
-- Project Manager: OpenClaw bot `delivery-orchestrator`
+- Reviewer: `openai` + `gpt-5.4`
+- Project Manager: `openai` + `gpt-5.4`
 
 If you want fallback provider coverage, add:
 
@@ -154,7 +166,8 @@ After the app starts, verify these flows:
 4. Open `Goal & MVP` and save an edit
 5. Open `Tasks` and inspect task detail
 6. Open `Agents` and confirm runtime choices show `openclaw` and `provider`
-7. Open `Workspace` and `Preview` and confirm the hosted/local capability messaging matches the deployment mode
+7. Open `Workspace` and confirm the GitHub remote is visible or editable
+8. Open `Preview` and confirm the hosted/local capability messaging matches the deployment mode
 
 ## Test Commands
 

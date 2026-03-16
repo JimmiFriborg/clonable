@@ -32,6 +32,7 @@ export function CreateProjectForm() {
         targetUser: String(formData.get("targetUser") ?? "").trim(),
         constraints: parseLines(formData.get("constraints")),
         stackPreferences: parseLines(formData.get("stackPreferences")),
+        githubRepositoryUrl: String(formData.get("githubRepositoryUrl") ?? "").trim() || undefined,
       }),
     });
 
@@ -104,12 +105,25 @@ export function CreateProjectForm() {
         </label>
       </div>
 
+      <label className="grid gap-2">
+        <span className="text-sm font-semibold text-slate-900">GitHub repository</span>
+        <input
+          name="githubRepositoryUrl"
+          placeholder="https://github.com/your-org/your-repo.git"
+          className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none ring-0 transition focus:border-teal-600"
+        />
+        <span className="text-sm leading-6 text-slate-500">
+          Optional. If you add a GitHub repo now, Clonable will carry it into the workspace setup.
+          If your install has a default GitHub owner configured, Clonable can derive the remote automatically.
+        </span>
+      </label>
+
       <div className="rounded-[24px] border border-slate-200 bg-slate-950/[0.03] p-4">
         <p className="text-base font-semibold text-slate-950">What happens next</p>
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          Clonable will persist the new project, seed the default agents, ask the
+          Clonable will persist the new project, seed provider-first default agents, ask the
           planner for an MVP draft, and fall back to a manual draft if the planner is
-          unavailable.
+          unavailable. OpenClaw is optional; built-in chat can use your configured AI provider.
         </p>
       </div>
 

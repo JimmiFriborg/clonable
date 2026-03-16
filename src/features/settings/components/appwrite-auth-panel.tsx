@@ -144,7 +144,7 @@ export function AppwriteAuthPanel({
     <div className="space-y-4">
       <p className="text-sm leading-6 text-slate-700">
         {configured
-          ? "Use the AgentBoard Appwrite project for browser auth while Clonable keeps policy and execution on its own server."
+          ? "Use the Clonable Appwrite project for browser auth while Clonable keeps policy and execution on its own server."
           : "Appwrite public config is missing, so hosted sign-in is not available yet."}
       </p>
 

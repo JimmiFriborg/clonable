@@ -46,6 +46,14 @@ function slugify(value: string) {
     .slice(0, 48);
 }
 
+function resolveRepoProvider(remoteUrl?: string) {
+  if (!remoteUrl) {
+    return "Local Git";
+  }
+
+  return /github/i.test(remoteUrl) ? "GitHub" : "Remote Git";
+}
+
 function ensureWorkspaceScaffold(project: ProjectRecord) {
   fs.mkdirSync(project.workspace.rootPath, { recursive: true });
   fs.mkdirSync(path.join(project.workspace.rootPath, ".clonable", "logs"), {
@@ -102,6 +110,29 @@ function ensureGitRepository(rootPath: string) {
   }
 }
 
+function ensureGitRemote(rootPath: string, remoteUrl?: string) {
+  if (!remoteUrl) {
+    return;
+  }
+
+  const remoteResult = runCommand("git", ["remote", "get-url", "origin"], rootPath);
+  if (remoteResult.ok) {
+    if (remoteResult.stdout !== remoteUrl) {
+      const setUrlResult = runCommand("git", ["remote", "set-url", "origin", remoteUrl], rootPath);
+      if (!setUrlResult.ok) {
+        throw new Error(setUrlResult.stderr || setUrlResult.stdout || "Git remote update failed.");
+      }
+    }
+
+    return;
+  }
+
+  const addResult = runCommand("git", ["remote", "add", "origin", remoteUrl], rootPath);
+  if (!addResult.ok) {
+    throw new Error(addResult.stderr || addResult.stdout || "Git remote add failed.");
+  }
+}
+
 function listWorkspaceFiles(rootPath: string): WorkspaceFileRecord[] {
   const files: WorkspaceFileRecord[] = [];
 
@@ -144,6 +175,7 @@ function listWorkspaceFiles(rootPath: string): WorkspaceFileRecord[] {
 function buildWorkspaceSnapshot(project: ProjectRecord): WorkspaceRecord {
   ensureWorkspaceScaffold(project);
   ensureGitRepository(project.workspace.rootPath);
+  ensureGitRemote(project.workspace.rootPath, project.workspace.remoteUrl);
 
   const statusResult = runCommand("git", ["status", "--porcelain"], project.workspace.rootPath);
   const dirtyFiles = statusResult.ok
@@ -163,15 +195,18 @@ function buildWorkspaceSnapshot(project: ProjectRecord): WorkspaceRecord {
     ["branch", "--show-current"],
     project.workspace.rootPath,
   );
+  const remoteResult = runCommand("git", ["remote", "get-url", "origin"], project.workspace.rootPath);
   const lastCommitResult = runCommand(
     "git",
     ["log", "-1", "--pretty=%s"],
     project.workspace.rootPath,
   );
+  const remoteUrl = remoteResult.ok && remoteResult.stdout ? remoteResult.stdout : project.workspace.remoteUrl;
 
   return {
     rootPath: project.workspace.rootPath,
-    repoProvider: "Local Git",
+    repoProvider: resolveRepoProvider(remoteUrl),
+    remoteUrl,
     branch: branchResult.ok && branchResult.stdout ? branchResult.stdout : "main",
     lastCommit:
       lastCommitResult.ok && lastCommitResult.stdout
@@ -381,6 +416,50 @@ export async function ensureTaskWorkspaceBranch(
         branchName,
       },
     });
+  }
+
+  return updatedProject;
+}
+
+export async function configureProjectWorkspaceRemote(
+  projectId: string,
+  remoteUrl: string,
+  dependencies: WorkspaceServiceDependencies = {},
+) {
+  const repository = dependencies.repository ?? sqliteProjectRepository;
+  const project = await repository.getProject(projectId);
+
+  if (!project) {
+    return undefined;
+  }
+
+  const normalizedRemoteUrl = remoteUrl.trim();
+  const workspace = {
+    ...project.workspace,
+    remoteUrl: normalizedRemoteUrl || undefined,
+    repoProvider: resolveRepoProvider(normalizedRemoteUrl || undefined),
+  };
+
+  const updatedProject = await repository.updateWorkspaceState(projectId, workspace);
+
+  if (!updatedProject) {
+    return undefined;
+  }
+
+  await repository.recordEvent({
+    projectId,
+    type: "workspace",
+    summary: normalizedRemoteUrl ? "Workspace remote configured" : "Workspace remote cleared",
+    reason: normalizedRemoteUrl
+      ? `Workspace remote is now ${normalizedRemoteUrl}.`
+      : "Workspace remote was cleared and the project returned to local-only Git mode.",
+    payload: {
+      remoteUrl: normalizedRemoteUrl || null,
+    },
+  });
+
+  if (fs.existsSync(updatedProject.workspace.rootPath)) {
+    return syncProjectWorkspace(projectId, { repository }, { recordEvent: false });
   }
 
   return updatedProject;

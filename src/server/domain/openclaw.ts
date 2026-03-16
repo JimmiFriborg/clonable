@@ -1,6 +1,5 @@
+import type { ChatBackend } from "@/server/domain/ai-provider";
 import type { TaskPriority } from "@/server/domain/project";
-
-export type ChatBackend = "openclaw";
 export const projectChatRoleOrder = ["system", "user", "assistant"] as const;
 export const projectChatSuggestionKindOrder = ["mvp", "task"] as const;
 export type ProjectChatRole = (typeof projectChatRoleOrder)[number];
@@ -47,6 +46,7 @@ export interface ProjectChatMessage {
 export interface ProjectChatSurface {
   backend: ChatBackend;
   configured: boolean;
+  assistantLabel: string;
   defaultBotId: string;
   bots: OpenClawBotProfile[];
   sessions: ProjectChatSession[];

@@ -25,6 +25,7 @@ describe("project-service", () => {
         targetUser: "Solo founders",
         constraints: ["Local-first"],
         stackPreferences: ["Next.js"],
+        githubRepositoryUrl: "https://github.com/example/ai-drafted-project.git",
       },
       {
         repository: temp.repository,
@@ -64,6 +65,11 @@ describe("project-service", () => {
     expect(stored?.agents).toHaveLength(8);
     expect(stored?.tasks).toHaveLength(1);
     expect(stored?.definitionOfDone).toContain("Clear MVP");
+    expect(stored?.workspace.remoteUrl).toBe("https://github.com/example/ai-drafted-project.git");
+    expect(stored?.workspace.repoProvider).toBe("GitHub");
+    expect(
+      stored?.agents.find((agent) => agent.name === "Project Manager")?.runtimeBackend,
+    ).toBe("provider");
   });
 
   it("falls back to a manual MVP draft when the planner fails", async () => {

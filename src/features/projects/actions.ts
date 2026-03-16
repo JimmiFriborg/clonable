@@ -25,6 +25,7 @@ import {
 } from "@/server/services/preview-service";
 import {
   commitProjectWorkspace,
+  configureProjectWorkspaceRemote,
   syncProjectWorkspace,
 } from "@/server/services/workspace-service";
 import {
@@ -108,6 +109,7 @@ export async function createProjectAction(formData: FormData) {
     targetUser: String(formData.get("targetUser") ?? "").trim(),
     constraints: parseLines(formData.get("constraints")),
     stackPreferences: parseLines(formData.get("stackPreferences")),
+    githubRepositoryUrl: String(formData.get("githubRepositoryUrl") ?? "").trim() || undefined,
   });
 
   revalidatePath("/");
@@ -355,6 +357,20 @@ export async function commitWorkspaceAction(
 ) {
   guardLocalExecution(returnPath);
   await commitProjectWorkspace(projectId, String(formData.get("message") ?? "").trim());
+
+  revalidateProjectPaths(projectId);
+  redirect(returnPath);
+}
+
+export async function configureWorkspaceRemoteAction(
+  projectId: string,
+  returnPath: string,
+  formData: FormData,
+) {
+  await configureProjectWorkspaceRemote(
+    projectId,
+    String(formData.get("remoteUrl") ?? "").trim(),
+  );
 
   revalidateProjectPaths(projectId);
   redirect(returnPath);

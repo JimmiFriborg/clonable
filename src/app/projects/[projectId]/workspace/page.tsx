@@ -1,7 +1,11 @@
 import { notFound } from "next/navigation";
 
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
-import { commitWorkspaceAction, syncWorkspaceAction } from "@/features/projects/actions";
+import {
+  commitWorkspaceAction,
+  configureWorkspaceRemoteAction,
+  syncWorkspaceAction,
+} from "@/features/projects/actions";
 import { PageIntro } from "@/components/ui/page-intro";
 import { getDeploymentSurface } from "@/server/services/deployment-service";
 import { getProjectDashboard } from "@/server/services/project-service";
@@ -24,6 +28,11 @@ export default async function WorkspacePage({
   const { workspace } = dashboard.project;
   const workspaceExecutionEnabled = deployment.capabilities.workspaceExecution;
   const syncAction = syncWorkspaceAction.bind(null, projectId, `/projects/${projectId}/workspace`);
+  const remoteAction = configureWorkspaceRemoteAction.bind(
+    null,
+    projectId,
+    `/projects/${projectId}/workspace`,
+  );
   const commitAction = commitWorkspaceAction.bind(
     null,
     projectId,
@@ -63,7 +72,8 @@ export default async function WorkspacePage({
           <div className="mt-5 rounded-[24px] border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
             This deployment is running in hosted mode, so local workspace execution is disabled
             here. Use a local Clonable instance when you need filesystem sync, Git writes, and
-            checkpoint commits.
+            checkpoint commits. You can still set the intended GitHub remote here so local runs
+            pick it up automatically later.
           </div>
         ) : null}
 
@@ -85,6 +95,42 @@ export default async function WorkspacePage({
               className="inline-flex w-full justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
             >
               Commit changes
+            </button>
+          </div>
+        </form>
+      </Card>
+
+      <Card>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-2xl space-y-2">
+            <CardTitle>GitHub remote</CardTitle>
+            <CardDescription>
+              Keep the project tied to a user-owned GitHub repository. Clonable will use this
+              remote when the local workspace is available.
+            </CardDescription>
+          </div>
+          <div className="rounded-[24px] bg-slate-950 px-4 py-3 text-sm font-medium text-white">
+            {workspace.remoteUrl ? "Linked" : "Not linked"}
+          </div>
+        </div>
+
+        <form action={remoteAction} className="mt-6 grid gap-4 lg:grid-cols-[1fr_auto]">
+          <label className="grid gap-2">
+            <span className="text-sm font-semibold text-slate-900">Repository remote URL</span>
+            <input
+              name="remoteUrl"
+              defaultValue={workspace.remoteUrl ?? ""}
+              placeholder="https://github.com/your-org/your-repo.git"
+              className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-teal-600"
+            />
+          </label>
+
+          <div className="flex items-end">
+            <button
+              type="submit"
+              className="inline-flex w-full justify-center rounded-full border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
+            >
+              Save remote
             </button>
           </div>
         </form>
@@ -113,12 +159,18 @@ export default async function WorkspacePage({
               <p className="mt-2 text-lg font-semibold text-slate-950">{workspace.repoProvider}</p>
             </div>
             <div className="rounded-[24px] border border-slate-200 bg-slate-950/[0.03] p-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Remote</p>
+              <p className="mt-2 text-sm font-semibold text-slate-950">
+                {workspace.remoteUrl ?? "No remote linked yet"}
+              </p>
+            </div>
+            <div className="rounded-[24px] border border-slate-200 bg-slate-950/[0.03] p-4">
               <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Dirty files</p>
               <p className="mt-2 text-lg font-semibold text-slate-950">
                 {workspace.dirtyFiles.length}
               </p>
             </div>
-            <div className="rounded-[24px] border border-slate-200 bg-slate-950/[0.03] p-4">
+            <div className="rounded-[24px] border border-slate-200 bg-slate-950/[0.03] p-4 sm:col-span-3">
               <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Last commit</p>
               <p className="mt-2 text-lg font-semibold text-slate-950">{workspace.lastCommit}</p>
             </div>

@@ -2,7 +2,11 @@ import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 
-import type { AiProvider, ProviderConfigResponse } from "@/server/domain/ai-provider";
+import type {
+  AiProvider,
+  ProviderConfigResponse,
+  ProviderSelection,
+} from "@/server/domain/ai-provider";
 
 const DEFAULT_MODELS: Record<AiProvider, string> = {
   openai: "gpt-5.4",
@@ -45,6 +49,10 @@ function getDefaultModel(provider: AiProvider) {
     default:
       return DEFAULT_MODELS.openai;
   }
+}
+
+function isSupportedProvider(value: string | undefined): value is AiProvider {
+  return value === "openai" || value === "anthropic" || value === "gemini";
 }
 
 function buildJsonPrompt(input: string) {
@@ -212,11 +220,37 @@ export function getProviderConfigResponse(): ProviderConfigResponse {
 }
 
 export function getPlannerProviderSelection() {
-  const provider = (process.env.CLONABLE_PLANNER_PROVIDER?.trim().toLowerCase() ??
-    "openai") as AiProvider;
+  const requestedProvider = process.env.CLONABLE_PLANNER_PROVIDER?.trim().toLowerCase();
+  const firstConfigured = getFirstConfiguredProvider();
+  const provider =
+    isSupportedProvider(requestedProvider) && getApiKey(requestedProvider)
+      ? requestedProvider
+      : firstConfigured ?? "openai";
 
   return {
     provider,
     model: process.env.CLONABLE_PLANNER_MODEL?.trim() || getDefaultModel(provider),
+  };
+}
+
+export function getFirstConfiguredProvider() {
+  return (["openai", "anthropic", "gemini"] as const).find((provider) =>
+    Boolean(getApiKey(provider)),
+  );
+}
+
+export function getChatProviderSelection(): ProviderSelection {
+  const requestedProvider = process.env.CLONABLE_CHAT_PROVIDER?.trim().toLowerCase();
+  const firstConfigured = getFirstConfiguredProvider();
+  const fallbackProvider = getPlannerProviderSelection().provider;
+  const provider =
+    isSupportedProvider(requestedProvider) && getApiKey(requestedProvider)
+      ? requestedProvider
+      : firstConfigured ?? fallbackProvider;
+
+  return {
+    provider,
+    model: process.env.CLONABLE_CHAT_MODEL?.trim() || getDefaultModel(provider),
+    configured: Boolean(getApiKey(provider)),
   };
 }

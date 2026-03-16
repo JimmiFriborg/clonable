@@ -13,11 +13,13 @@ const cleanups: Array<() => void> = [];
 const originalBaseUrl = process.env.OPENCLAW_BASE_URL;
 const originalApiKey = process.env.OPENCLAW_API_KEY;
 const originalDefaultBotId = process.env.OPENCLAW_DEFAULT_BOT_ID;
+const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
 
 afterEach(() => {
   process.env.OPENCLAW_BASE_URL = originalBaseUrl;
   process.env.OPENCLAW_API_KEY = originalApiKey;
   process.env.OPENCLAW_DEFAULT_BOT_ID = originalDefaultBotId;
+  process.env.OPENAI_API_KEY = originalOpenAiApiKey;
 
   while (cleanups.length > 0) {
     cleanups.pop()?.();
@@ -39,6 +41,7 @@ describe("openclaw-service", () => {
   it("persists chat sessions and messages even when OpenClaw is offline", async () => {
     process.env.OPENCLAW_BASE_URL = "";
     process.env.OPENCLAW_API_KEY = "";
+    process.env.OPENAI_API_KEY = "";
 
     const temp = createTempRepository();
     cleanups.push(temp.cleanup);
@@ -62,8 +65,9 @@ describe("openclaw-service", () => {
 
     const chat = await getProjectChatSurface(project.id, result?.sessionId, temp.repository);
 
-    expect(result?.assistantMessage.content).toContain("OpenClaw");
+    expect(result?.assistantMessage.content).toContain("provider API key");
     expect(chat?.activeSession?.botId).toBe("mvp-guide");
+    expect(chat?.backend).toBe("provider");
     expect(chat?.messages).toHaveLength(2);
     expect(chat?.messages[0]?.role).toBe("user");
     expect(chat?.messages[1]?.role).toBe("assistant");

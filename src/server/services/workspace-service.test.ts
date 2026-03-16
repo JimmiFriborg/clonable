@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTempRepository } from "@/server/test-utils/temp-database";
 import {
   commitProjectWorkspace,
+  configureProjectWorkspaceRemote,
   ensureTaskWorkspaceBranch,
   syncProjectWorkspace,
 } from "@/server/services/workspace-service";
@@ -124,5 +125,43 @@ describe("workspace-service", () => {
     });
 
     expect(updated?.workspace.branch).toBe("task/prepare-task-branch");
+  });
+
+  it("stores and applies a GitHub remote for the workspace", async () => {
+    const temp = createTempRepository();
+    cleanups.push(temp.cleanup);
+
+    const project = await temp.repository.createProject({
+      name: "Remote project",
+      ideaPrompt: "Connect a GitHub remote.",
+      targetUser: "Founders",
+      constraints: ["GitHub-first"],
+      stackPreferences: ["Next.js"],
+      githubRepositoryUrl: "https://github.com/example/remote-project.git",
+    });
+    const workspaceRoot = path.join(temp.tempDirectory, "remote-project");
+
+    await temp.repository.updateWorkspaceState(project.id, {
+      ...project.workspace,
+      rootPath: workspaceRoot,
+    });
+
+    const configured = await configureProjectWorkspaceRemote(
+      project.id,
+      "https://github.com/example/remote-project.git",
+      {
+        repository: temp.repository,
+      },
+    );
+
+    expect(configured?.workspace.repoProvider).toBe("GitHub");
+    expect(configured?.workspace.remoteUrl).toBe("https://github.com/example/remote-project.git");
+
+    const synced = await syncProjectWorkspace(project.id, {
+      repository: temp.repository,
+    });
+
+    expect(synced?.workspace.remoteUrl).toBe("https://github.com/example/remote-project.git");
+    expect(synced?.workspace.repoProvider).toBe("GitHub");
   });
 });

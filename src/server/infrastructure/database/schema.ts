@@ -190,6 +190,7 @@ export const workspaceStateTable = sqliteTable("workspace_state", {
     .references(() => projectsTable.id, { onDelete: "cascade" }),
   rootPath: text("root_path").notNull(),
   repoProvider: text("repo_provider").notNull(),
+  remoteUrl: text("remote_url"),
   branch: text("branch").notNull(),
   lastCommit: text("last_commit").notNull(),
   dirtyFiles: text("dirty_files").notNull(),

@@ -153,7 +153,7 @@ describe("SQLiteProjectRepository", () => {
     });
 
     const manager = project.agents.find((agent) => agent.policyRole === "orchestrator");
-    expect(manager?.runtimeBackend).toBe("openclaw");
+    expect(manager?.runtimeBackend).toBe("provider");
 
     const updatedProject = await temp.repository.updateProjectDefaultChatBot(project.id, "quality-guardian");
     const session = await temp.repository.createProjectChatSession(project.id, {

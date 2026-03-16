@@ -217,7 +217,7 @@ export default async function ProjectBuildPage({
               <div className="flex flex-wrap items-center gap-3">
                 <Badge tone="warm">{dashboard.project.status}</Badge>
                 <span className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">
-                  OpenClaw chat
+                  {chat.backend === "openclaw" ? "OpenClaw chat" : "Provider chat"}
                 </span>
               </div>
               <div className="space-y-2">
@@ -298,7 +298,7 @@ export default async function ProjectBuildPage({
             <div className="space-y-4">
               <div className="rounded-[24px] border border-slate-200 bg-white p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Bot selection
+                  Assistant mode
                 </p>
                 <form
                   action={setProjectDefaultChatBotAction.bind(null, projectId, returnPath)}
@@ -319,7 +319,7 @@ export default async function ProjectBuildPage({
                     type="submit"
                     className="inline-flex w-full items-center justify-center rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
                   >
-                    Use this bot
+                    Use this mode
                   </button>
                 </form>
                 <form
@@ -356,7 +356,10 @@ export default async function ProjectBuildPage({
                         }`}
                       >
                         <p className="font-semibold">{sessionItem.title}</p>
-                        <p className="mt-1 text-xs opacity-75">{sessionItem.botId}</p>
+                        <p className="mt-1 text-xs opacity-75">
+                          {chat.bots.find((bot) => bot.id === sessionItem.botId)?.name ??
+                            sessionItem.botId}
+                        </p>
                       </Link>
                     ))
                   ) : (
@@ -375,11 +378,12 @@ export default async function ProjectBuildPage({
                     Built-in chat
                   </p>
                   <h2 className="mt-2 font-display text-2xl font-semibold tracking-tight text-slate-950">
-                    {chat.bots.find((bot) => bot.id === chat.defaultBotId)?.name ?? "OpenClaw"}
+                    {chat.bots.find((bot) => bot.id === chat.defaultBotId)?.name ??
+                      chat.assistantLabel}
                   </h2>
                 </div>
                 <div className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white">
-                  {chat.configured ? "Live" : "Setup needed"}
+                  {chat.configured ? chat.assistantLabel : "Setup needed"}
                 </div>
               </div>
 
@@ -444,9 +448,9 @@ export default async function ProjectBuildPage({
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div className="flex items-center gap-2 text-sm font-semibold">
-                            <Bot className="h-4 w-4" />
-                            {message.role === "assistant" ? "OpenClaw" : "You"}
-                          </div>
+                          <Bot className="h-4 w-4" />
+                          {message.role === "assistant" ? chat.assistantLabel : "You"}
+                        </div>
                           <span className="text-xs opacity-70">{message.createdAt}</span>
                         </div>
                         <p className="mt-3 whitespace-pre-wrap text-sm leading-6">
@@ -562,7 +566,7 @@ export default async function ProjectBuildPage({
                   })
                 ) : (
                   <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 p-6 text-sm leading-6 text-slate-600">
-                    Start a thread with one of your OpenClaw bots and turn good suggestions into explicit work instead of hidden scope changes.
+                    Start a thread and turn good suggestions into explicit work instead of hidden scope changes.
                   </div>
                 )}
               </div>
@@ -577,12 +581,12 @@ export default async function ProjectBuildPage({
                   name="content"
                   rows={4}
                   required
-                  placeholder="Ask OpenClaw to refine the MVP, propose next tasks, or challenge the current plan."
+                  placeholder="Ask the project chat to refine the MVP, propose next tasks, or challenge the current plan."
                   className="w-full rounded-[24px] border border-slate-200 bg-white px-4 py-4 text-sm leading-6 text-slate-900 outline-none transition focus:border-teal-600"
                 />
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm text-slate-500">
-                    Chat can suggest MVP/task changes, but the task policy still controls actual state changes.
+                    Chat can suggest MVP and task changes, but the task policy still controls actual state changes.
                   </p>
                   <button
                     type="submit"

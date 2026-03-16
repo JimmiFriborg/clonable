@@ -249,6 +249,7 @@ export interface PreviewRecord {
 export interface WorkspaceRecord {
   rootPath: string;
   repoProvider: string;
+  remoteUrl?: string;
   branch: string;
   lastCommit: string;
   dirtyFiles: string[];
@@ -339,6 +340,7 @@ export interface ProjectIntakeInput {
   targetUser: string;
   constraints: string[];
   stackPreferences: string[];
+  githubRepositoryUrl?: string;
 }
 
 export interface PlannerDraftPhase {
@@ -456,6 +458,10 @@ export interface AgentRunCreateInput {
 export interface PreviewSettingsInput {
   command: string;
   port: number;
+}
+
+export interface WorkspaceRemoteInput {
+  remoteUrl?: string;
 }
 
 export interface BuilderRunResult {
