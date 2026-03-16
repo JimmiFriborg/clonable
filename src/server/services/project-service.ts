@@ -1,6 +1,9 @@
+import crypto from "node:crypto";
+
 import type { ProjectRepository } from "@/server/domain/project-repository";
 import type {
   AgentCreateInput,
+  AgentRunCreateInput,
   AgentUpdateInput,
   FeatureCreateInput,
   PlannerDraft,
@@ -13,7 +16,10 @@ import type {
   TaskOwnerInput,
   TaskTransitionInput,
 } from "@/server/domain/project";
+import type { ProviderConfigResponse } from "@/server/domain/ai-provider";
+import { getProviderConfigResponse } from "@/server/services/provider-gateway";
 import { sqliteProjectRepository } from "@/server/infrastructure/repositories/sqlite-project-repository";
+import { syncProjectMetadataToAppwrite } from "@/server/infrastructure/appwrite/metadata-sync";
 import {
   ensureOrchestrationRunner,
   runProjectOrchestrationCycle,
@@ -36,6 +42,14 @@ function buildFallbackMvp(input: ProjectIntakeInput): ProjectMvpUpdateInput {
       "The workspace remains inspectable and recoverable.",
     ],
   };
+}
+
+async function syncProjectMetadata(project: ProjectRecord | undefined) {
+  if (!project) {
+    return;
+  }
+
+  await syncProjectMetadataToAppwrite(project);
 }
 
 export async function listProjects() {
@@ -95,6 +109,7 @@ export async function createProjectFromIdea(
       },
     });
 
+    await syncProjectMetadata(updatedProject);
     return updatedProject;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown planner failure.";
@@ -114,6 +129,7 @@ export async function createProjectFromIdea(
       },
     });
 
+    await syncProjectMetadata(updatedProject);
     return updatedProject;
   }
 }
@@ -130,6 +146,7 @@ export async function updateProjectMvp(projectId: string, input: ProjectMvpUpdat
     });
   }
 
+  await syncProjectMetadata(project);
   return project;
 }
 
@@ -145,6 +162,7 @@ export async function createProjectPhase(projectId: string, input: PhaseCreateIn
     });
   }
 
+  await syncProjectMetadata(project);
   return project;
 }
 
@@ -188,6 +206,7 @@ export async function createProjectTask(projectId: string, input: TaskCreateInpu
     await runProjectOrchestrationCycle(projectId);
   }
 
+  await syncProjectMetadata(project);
   return project;
 }
 
@@ -216,6 +235,7 @@ export async function transitionProjectTask(
     }
   }
 
+  await syncProjectMetadata(project);
   return project;
 }
 
@@ -244,6 +264,7 @@ export async function assignProjectTaskOwner(
     }
   }
 
+  await syncProjectMetadata(project);
   return project;
 }
 
@@ -262,6 +283,7 @@ export async function createProjectAgent(projectId: string, input: AgentCreateIn
     });
   }
 
+  await syncProjectMetadata(project);
   return project;
 }
 
@@ -286,6 +308,7 @@ export async function updateProjectAgent(
     });
   }
 
+  await syncProjectMetadata(project);
   return project;
 }
 
@@ -311,6 +334,45 @@ export async function updateProjectRuntime(projectId: string, runtime: ProjectRu
   }
 
   return project;
+}
+
+export async function enqueueProjectAgentRun(projectId: string, input: AgentRunCreateInput) {
+  const run = {
+    id: `run-${crypto.randomUUID()}`,
+    agentId: input.agentId,
+    taskId: input.taskId,
+    status: "Queued" as const,
+    trigger: input.trigger,
+    summary: input.summary,
+    reason: input.reason,
+    inputSummary: input.inputSummary,
+    changedFiles: [],
+    artifacts: [],
+    createdAt: new Date().toISOString(),
+  };
+
+  const project = await sqliteProjectRepository.addAgentRun(projectId, run);
+
+  if (project) {
+    await sqliteProjectRepository.recordEvent({
+      projectId,
+      type: "agent",
+      summary: "Agent run queued",
+      reason: input.reason,
+      payload: {
+        taskId: input.taskId,
+        agentId: input.agentId,
+        trigger: input.trigger,
+      },
+    });
+  }
+
+  await syncProjectMetadata(project);
+  return run;
+}
+
+export async function getProjectProviderConfig(): Promise<ProviderConfigResponse> {
+  return getProviderConfigResponse();
 }
 
 export async function seedProject(project: ProjectRecord) {

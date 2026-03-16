@@ -1,8 +1,10 @@
-import OpenAI from "openai";
-import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 
-import type { PlannerDraft, ProjectIntakeInput } from "@/server/domain/project";
+import type { ProjectIntakeInput } from "@/server/domain/project";
+import {
+  generateStructuredObject,
+  getPlannerProviderSelection,
+} from "@/server/services/provider-gateway";
 
 const plannerDraftSchema = z.object({
   vision: z.string().min(1),
@@ -46,14 +48,6 @@ const plannerDraftSchema = z.object({
 
 export class PlannerServiceError extends Error {}
 
-export interface PlannerClientLike {
-  responses: {
-    parse: (...args: unknown[]) => Promise<{
-      output_parsed: PlannerDraft | null;
-    }>;
-  };
-}
-
 function buildPlannerInput(project: ProjectIntakeInput) {
   return [
     `Project name: ${project.name}`,
@@ -64,36 +58,26 @@ function buildPlannerInput(project: ProjectIntakeInput) {
   ].join("\n");
 }
 
-function getPlannerClient() {
-  return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  }) as unknown as PlannerClientLike;
-}
-
 export async function generatePlannerDraft(
   project: ProjectIntakeInput,
-  client: PlannerClientLike = getPlannerClient(),
 ) {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new PlannerServiceError("OPENAI_API_KEY is missing.");
+  const providerSelection = getPlannerProviderSelection();
+
+  try {
+    return await generateStructuredObject({
+      provider: providerSelection.provider,
+      model: providerSelection.model,
+      instructions:
+        "You are Clonable's Product Planner. Convert the idea into the smallest credible MVP, separate later scope, define a concise project definition of done, and produce a planning-first implementation draft. Keep the MVP tight, practical, and stable. Use priorities blocker/high/normal/low.",
+      input: buildPlannerInput(project),
+      schema: plannerDraftSchema,
+      schemaName: "planner_draft",
+    });
+  } catch (error) {
+    throw new PlannerServiceError(
+      error instanceof Error ? error.message : "Planner generation failed.",
+    );
   }
-
-  const model = process.env.CLONABLE_PLANNER_MODEL ?? "gpt-5.4";
-  const response = await client.responses.parse({
-    model,
-    instructions:
-      "You are Clonable's Product Planner. Convert the idea into the smallest credible MVP, separate later scope, define a concise project definition of done, and produce a planning-first implementation draft. Keep the MVP tight, practical, and stable. Use priorities blocker/high/normal/low.",
-    input: buildPlannerInput(project),
-    text: {
-      format: zodTextFormat(plannerDraftSchema, "planner_draft"),
-    },
-  });
-
-  if (!response.output_parsed) {
-    throw new PlannerServiceError("Planner response did not contain parsed output.");
-  }
-
-  return response.output_parsed;
 }
 
 export { plannerDraftSchema };

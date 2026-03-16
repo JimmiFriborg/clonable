@@ -421,6 +421,15 @@ export interface AgentCreateInput {
 
 export type AgentUpdateInput = AgentCreateInput;
 
+export interface AgentRunCreateInput {
+  agentId: string;
+  taskId?: string;
+  trigger: AgentRunTrigger;
+  summary: string;
+  reason: string;
+  inputSummary?: string;
+}
+
 export interface PreviewSettingsInput {
   command: string;
   port: number;

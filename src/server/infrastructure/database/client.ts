@@ -37,6 +37,18 @@ function hasColumn(sqlite: Database.Database, tableName: string, columnName: str
   return rows.some((row) => row.name === columnName);
 }
 
+function getMigrationCount(sqlite: Database.Database) {
+  if (!hasTable(sqlite, "__drizzle_migrations")) {
+    return 0;
+  }
+
+  const row = sqlite
+    .prepare("SELECT COUNT(*) as count FROM __drizzle_migrations")
+    .get() as { count: number };
+
+  return row.count;
+}
+
 function ensureMigrations(
   sqlite: Database.Database,
   db: AppDatabase,
@@ -46,6 +58,15 @@ function ensureMigrations(
   const journalPath = path.join(migrationsFolder, "meta", "_journal.json");
 
   if (!fs.existsSync(journalPath)) {
+    return;
+  }
+
+  const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
+    entries?: unknown[];
+  };
+  const journalEntryCount = journal.entries?.length ?? 0;
+
+  if (getMigrationCount(sqlite) >= journalEntryCount && journalEntryCount > 0) {
     return;
   }
 
@@ -69,6 +90,14 @@ function ensureMigrations(
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
         throw error;
+      }
+
+      if (fs.existsSync(lockPath)) {
+        const lockAge = Date.now() - fs.statSync(lockPath).mtimeMs;
+        if (lockAge > MIGRATION_LOCK_TIMEOUT_MS) {
+          fs.unlinkSync(lockPath);
+          continue;
+        }
       }
 
       if (Date.now() - start > MIGRATION_LOCK_TIMEOUT_MS) {
