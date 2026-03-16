@@ -18,8 +18,8 @@ export default async function NewProjectPage() {
       <div className="mx-auto max-w-[1100px] space-y-6">
         <PageIntro
           eyebrow="Create Project"
-          title="Start with the idea, then define the real MVP"
-          description="This flow captures the idea, the audience, the constraints, and the repo intent, then asks the planner to propose the smallest credible MVP."
+          title="Start with one prompt, then tighten the real MVP"
+          description="Clonable can auto-fill the project name, target user, stable stack defaults, and GitHub remote intent so the first step stays lightweight."
           action={
             <Link
               href="/"
@@ -59,8 +59,8 @@ export default async function NewProjectPage() {
                 Repo model
               </p>
               <p className="mt-3 text-sm leading-6 text-slate-700">
-                Add a GitHub repo now if you already know it, or let Clonable carry a local workspace
-                until you connect one.
+                Add a GitHub repo now if you already know it, or let Clonable derive the remote from
+                your default owner and carry it into the workspace automatically.
               </p>
             </div>
           </div>

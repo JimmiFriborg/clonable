@@ -125,4 +125,54 @@ describe("project-service", () => {
     expect(stored?.plannerMessage).toContain("Planner timed out");
     expect(stored?.tasks).toHaveLength(0);
   });
+
+  it("auto-fills project defaults when the intake only provides an idea", async () => {
+    const temp = createTempRepository();
+    cleanups.push(temp.cleanup);
+
+    const project = await createProjectFromIdea(
+      {
+        name: "",
+        ideaPrompt: "Build a builder workspace for creative teams who need visible momentum.",
+        targetUser: "",
+        constraints: [],
+        stackPreferences: [],
+      },
+      {
+        repository: temp.repository,
+        planner: async () => ({
+          vision: "Vision",
+          goalStatement: "Goal statement",
+          mvpSummary: "MVP summary",
+          successDefinition: "Success",
+          laterScope: [],
+          boundaryReasoning: "Boundary",
+          definitionOfDone: ["Clear MVP"],
+          phases: [{ title: "Phase 1", goal: "Phase goal" }],
+          features: [
+            {
+              phaseTitle: "Phase 1",
+              title: "Feature 1",
+              summary: "Feature summary",
+              priority: "high",
+            },
+          ],
+          tasks: [
+            {
+              featureTitle: "Feature 1",
+              title: "Task 1",
+              description: "Task description",
+              priority: "high",
+              acceptanceCriteria: ["Works"],
+              dependsOn: [],
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(project.name).not.toBe("");
+    expect(project.targetUser).not.toBe("");
+    expect(project.stackPreferences).toEqual(["Next.js", "TypeScript", "Tailwind"]);
+  });
 });

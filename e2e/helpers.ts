@@ -29,12 +29,8 @@ export async function createProjectViaApi(
   return (await response.json()) as E2eProject;
 }
 
-export async function fillProjectForm(page: Page, name: string) {
-  await page.getByLabel("Project name").fill(name);
-  await page.getByLabel("Target user").fill("Founders");
-  await page
-    .getByLabel("Idea prompt")
-    .fill("Build a stable MVP planning workspace with visible progress and agent routing.");
-  await page.getByLabel("Constraints").fill("Local-first\nHosted-safe");
-  await page.getByLabel("Stack preferences").fill("Next.js\nTypeScript");
+export async function fillProjectForm(page: Page, prompt?: string) {
+  await page.getByLabel("What do you want to build?").fill(
+    prompt ?? "Build a stable MVP planning workspace with visible progress and agent routing.",
+  );
 }

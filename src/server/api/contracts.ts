@@ -30,9 +30,9 @@ export type ProjectChatResponse = ProjectChatSurface;
 export type OpenClawBotsResponse = OpenClawCatalogResponse;
 
 export const createProjectRequestSchema = z.object({
-  name: z.string().min(1),
+  name: z.string().default(""),
   ideaPrompt: z.string().min(1),
-  targetUser: z.string().min(1),
+  targetUser: z.string().default(""),
   constraints: z.array(z.string()).default([]),
   stackPreferences: z.array(z.string()).default([]),
   githubRepositoryUrl: z.string().trim().optional(),

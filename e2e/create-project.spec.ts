@@ -13,16 +13,16 @@ test.describe("project creation", () => {
     await page.getByRole("link", { name: "Create project" }).last().click();
     await expect(page).toHaveURL("/projects/new");
 
-    const projectName = `Mobile E2E ${Date.now()}`;
-    await fillProjectForm(page, projectName);
+    const prompt = `Create a mobile-first build loop for async product teams ${Date.now()}`;
+    await fillProjectForm(page, prompt);
 
     await Promise.all([
       page.waitForURL(/\/projects\/[^/]+\/build/),
-      page.getByRole("button", { name: "Create project" }).click(),
+      page.getByRole("button", { name: "Draft my MVP" }).click(),
     ]);
 
     await expect(page.getByRole("heading", { name: "Build loop" })).toBeVisible();
     await expect(page.locator("p").filter({ hasText: /^MVP boundary$/ })).toBeVisible();
-    await expect(page.getByRole("heading", { name: projectName, exact: true })).toBeVisible();
+    await expect(page.locator("aside h1")).toBeVisible();
   });
 });

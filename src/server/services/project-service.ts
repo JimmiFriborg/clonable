@@ -30,6 +30,63 @@ import { generatePlannerDraft } from "@/server/services/planner-service";
 import { ensureTaskWorkspaceBranch } from "@/server/services/workspace-service";
 
 const DEFAULT_PLANNER_TIMEOUT_MS = 10_000;
+const DEFAULT_STACK_PREFERENCES = ["Next.js", "TypeScript", "Tailwind"];
+
+function capitalizeWord(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
+function deriveProjectName(ideaPrompt: string) {
+  const normalized = ideaPrompt.replace(/[^A-Za-z0-9\s-]/g, " ");
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const stopWords = new Set([
+    "a",
+    "an",
+    "and",
+    "app",
+    "build",
+    "for",
+    "of",
+    "platform",
+    "the",
+    "tool",
+    "to",
+    "with",
+  ]);
+  const meaningfulWords = words.filter((word) => !stopWords.has(word.toLowerCase()));
+  const selectedWords = (meaningfulWords.length > 0 ? meaningfulWords : words).slice(0, 4);
+  const derived = selectedWords.map(capitalizeWord).join(" ").trim();
+
+  return derived || "New Project";
+}
+
+function deriveTargetUser(ideaPrompt: string) {
+  const match = ideaPrompt.match(/\bfor\s+([^.!,\n]+?)(?:\s+(?:who|that|and|with)\b|[.!,\n]|$)/i);
+  const candidate = match?.[1]?.trim();
+
+  if (!candidate) {
+    return "Builders and product teams";
+  }
+
+  return candidate.charAt(0).toUpperCase() + candidate.slice(1);
+}
+
+function normalizeProjectIntakeInput(input: ProjectIntakeInput): ProjectIntakeInput {
+  const ideaPrompt = input.ideaPrompt.trim();
+
+  return {
+    ...input,
+    ideaPrompt,
+    name: input.name.trim() || deriveProjectName(ideaPrompt),
+    targetUser: input.targetUser.trim() || deriveTargetUser(ideaPrompt),
+    constraints: input.constraints.map((constraint) => constraint.trim()).filter(Boolean),
+    stackPreferences:
+      input.stackPreferences.map((preference) => preference.trim()).filter(Boolean).length > 0
+        ? input.stackPreferences.map((preference) => preference.trim()).filter(Boolean)
+        : DEFAULT_STACK_PREFERENCES,
+    githubRepositoryUrl: input.githubRepositoryUrl?.trim() || undefined,
+  };
+}
 
 function buildFallbackMvp(input: ProjectIntakeInput): ProjectMvpUpdateInput {
   return {
@@ -143,25 +200,27 @@ export async function createProjectFromIdea(
   input: ProjectIntakeInput,
   dependencies: CreateProjectDependencies = {},
 ) {
+  const normalizedInput = normalizeProjectIntakeInput(input);
   const repository = dependencies.repository ?? sqliteProjectRepository;
   const planner = dependencies.planner ?? generatePlannerDraft;
   ensureOrchestrationRunner(repository);
-  const project = await repository.createProject(input);
+  const project = await repository.createProject(normalizedInput);
 
   await repository.recordEvent({
     projectId: project.id,
     type: "system",
-    summary: "Project intake captured",
-    reason: "The project was created from the intake form and queued for planning.",
-    payload: {
-      targetUser: input.targetUser,
-      constraints: input.constraints,
-      stackPreferences: input.stackPreferences,
-    },
-  });
+      summary: "Project intake captured",
+      reason: "The project was created from the intake form and queued for planning.",
+      payload: {
+        targetUser: normalizedInput.targetUser,
+        constraints: normalizedInput.constraints,
+        stackPreferences: normalizedInput.stackPreferences,
+        githubRepositoryUrl: normalizedInput.githubRepositoryUrl,
+      },
+    });
 
   try {
-    const draft = await runPlannerWithTimeout(planner, input);
+    const draft = await runPlannerWithTimeout(planner, normalizedInput);
     const updatedProject = await repository.savePlannerDraft(project.id, draft);
 
     await repository.recordEvent({
@@ -183,7 +242,7 @@ export async function createProjectFromIdea(
     const updatedProject = await repository.savePlannerFailure(
       project.id,
       message,
-      buildFallbackMvp(input),
+      buildFallbackMvp(normalizedInput),
     );
 
     await repository.recordEvent({
