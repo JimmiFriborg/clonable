@@ -52,7 +52,11 @@ async function syncProjectMetadata(project: ProjectRecord | undefined) {
     return;
   }
 
-  await syncProjectMetadataToAppwrite(project);
+  try {
+    await syncProjectMetadataToAppwrite(project);
+  } catch (error) {
+    console.error("Appwrite metadata sync failed", error);
+  }
 }
 
 function normalizeAgentInput(input: AgentCreateInput): AgentCreateInput {

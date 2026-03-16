@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import { Databases, ID, Permission, Role } from "node-appwrite";
 
 import type { EventRecord, ProjectRecord } from "@/server/domain/project";
@@ -14,6 +16,17 @@ function serializeJson(value: unknown) {
 
 function buildPermissions() {
   return [Permission.read(Role.any()), Permission.write(Role.any())];
+}
+
+export function toAppwriteDocumentId(sourceId: string) {
+  const trimmed = sourceId.trim();
+  const validPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,35}$/;
+
+  if (validPattern.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `doc_${crypto.createHash("sha1").update(trimmed).digest("hex").slice(0, 32)}`;
 }
 
 async function createAttribute(
@@ -152,14 +165,20 @@ async function upsertDocument(
   }
 
   const { databases } = clients;
+  const resolvedDocumentId = documentId ? toAppwriteDocumentId(documentId) : ID.unique();
 
   try {
-    await databases.updateDocument(config.databaseId, collectionId, documentId, data);
+    await databases.updateDocument(
+      config.databaseId,
+      collectionId,
+      resolvedDocumentId,
+      data,
+    );
   } catch {
     await databases.createDocument(
       config.databaseId,
       collectionId,
-      documentId || ID.unique(),
+      resolvedDocumentId,
       data,
       buildPermissions(),
     );
