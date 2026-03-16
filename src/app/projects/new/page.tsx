@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { PageIntro } from "@/components/ui/page-intro";
 import { createProjectAction } from "@/features/projects/actions";
+import { SubmitButton } from "@/features/projects/components/submit-button";
 
 export default function NewProjectPage() {
   return (
@@ -93,12 +94,11 @@ export default function NewProjectPage() {
             </div>
 
             <div className="flex justify-end">
-              <button
-                type="submit"
-                className="inline-flex rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
-              >
-                Create project
-              </button>
+              <SubmitButton
+                idleLabel="Create project"
+                pendingLabel="Creating project..."
+                className="inline-flex w-full touch-manipulation justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
+              />
             </div>
           </form>
         </Card>

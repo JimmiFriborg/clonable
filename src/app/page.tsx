@@ -8,9 +8,11 @@ import { listProjects } from "@/server/services/project-service";
 
 export default async function HomePage() {
   const projects = await listProjects();
+  const ctaClassName =
+    "inline-flex items-center justify-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-100 touch-manipulation";
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(249,115,22,0.12),transparent_24%),linear-gradient(180deg,#fcfaf6_0%,#f6f0e6_100%)] px-4 py-6 lg:px-6">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.14),transparent_28%),radial-gradient(circle_at_top_right,rgba(249,115,22,0.12),transparent_24%),linear-gradient(180deg,#fcfaf6_0%,#f6f0e6_100%)] px-4 py-6 pb-24 lg:px-6 lg:pb-6">
       <div className="mx-auto max-w-[1400px] space-y-6">
         <Card className="overflow-hidden bg-[linear-gradient(135deg,rgba(15,23,42,0.96),rgba(8,47,73,0.94))] text-white">
           <div className="grid gap-8 lg:grid-cols-[1.3fr_0.9fr]">
@@ -40,10 +42,7 @@ export default async function HomePage() {
                 </span>
               </div>
               <div className="flex flex-wrap gap-3">
-                <Link
-                  href="/projects/new"
-                  className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-100"
-                >
+                <Link href="/projects/new" className={ctaClassName}>
                   Create project
                   <ArrowRight className="h-4 w-4" />
                 </Link>
@@ -199,6 +198,19 @@ export default async function HomePage() {
             </Card>
           </div>
         </section>
+      </div>
+
+      <div
+        className="fixed inset-x-4 z-20 sm:hidden"
+        style={{ bottom: "max(1rem, calc(env(safe-area-inset-bottom) + 0.75rem))" }}
+      >
+        <Link
+          href="/projects/new"
+          className="flex items-center justify-center gap-2 rounded-full bg-slate-950 px-5 py-4 text-sm font-semibold text-white shadow-[0_20px_40px_rgba(15,23,42,0.2)] transition hover:bg-slate-800 touch-manipulation"
+        >
+          Create project
+          <ArrowRight className="h-4 w-4" />
+        </Link>
       </div>
     </main>
   );
